@@ -17,5 +17,10 @@ config = {
     'misc': {
         'chat_height': 13
     }
+}
 
+
+config_lichess = {
+    'username': 'username',
+    'oauth': 'oauth'
 }
