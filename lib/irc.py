@@ -31,8 +31,8 @@ class Irc:
             pp('Error connecting to IRC server. ({}:{}) ({})'.format(
                 server, port, self.socket_retry_count + 1), 'error')
 
-            if self.socket_retry_count < 2:
-                self.socket_retry_count += 1
+            if Irc.socket_retry_count < 2:
+                Irc.socket_retry_count += 1
                 return self.set_socket_object()
             else:
                 sys.exit()
