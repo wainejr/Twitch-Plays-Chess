@@ -2,11 +2,11 @@
 
 from sys import exit
 from config.config import config
-from lib.bot import Bot
+from lib.botHandler import BotHandler
 
 # Twitch Plays
 
 try:
-    Bot().run()
+    BotHandler().run()
 except KeyboardInterrupt:
     exit()

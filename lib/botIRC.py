@@ -5,19 +5,19 @@ import re
 from lib.misc import pp, pbot
 
 
-class Irc:
+class BotIRC:
 
     socket_retry_count = 0
 
     def __init__(self, config):
         self.config = config
+        self.sock = None
         self.set_socket_object()
 
     def set_socket_object(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock = sock
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-        sock.settimeout(10)
+        self.sock.settimeout(10)
 
         username = self.config['account']['username'].lower()
         password = self.config['account']['password']
@@ -26,22 +26,22 @@ class Irc:
         port = self.config['irc']['port']
 
         try:
-            sock.connect((server, port))
+            self.sock.connect((server, port))
         except BaseException:
             pp('Error connecting to IRC server. ({}:{}) ({})'.format(
                 server, port, self.socket_retry_count + 1), 'error')
 
-            if Irc.socket_retry_count < 2:
-                Irc.socket_retry_count += 1
+            if BotIRC.socket_retry_count < 2:
+                BotIRC.socket_retry_count += 1
                 return self.set_socket_object()
             else:
                 sys.exit()
 
-        sock.settimeout(None)
+        self.sock.settimeout(None)
 
-        sock.send(bytes('USER {}\r\n'.format(username), encoding='utf-8'))
-        sock.send(bytes('PASS {}\r\n'.format(password), encoding='utf-8'))
-        sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
+        self.sock.send(bytes('USER {}\r\n'.format(username), encoding='utf-8'))
+        self.sock.send(bytes('PASS {}\r\n'.format(password), encoding='utf-8'))
+        self.sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
 
         if not self.check_login_status(self.recv()):
             pp('Invalid login.', 'error')
@@ -49,7 +49,7 @@ class Irc:
         else:
             pp('Login successful!')
 
-        sock.send(bytes('JOIN #{}\r\n'.format(username), encoding='utf-8'))
+        self.sock.send(bytes('JOIN #{}\r\n'.format(username), encoding='utf-8'))
         pp('Joined #{}'.format(username))
 
     def ping(self, data):
@@ -74,7 +74,8 @@ class Irc:
 
     def check_login_status(self, data):
         if not re.match(
-                r'^:(testserver\.local|tmi\.twitch\.tv) NOTICE \* :Login unsuccessful\r\n$', data):
+                r'^:(testserver\.local|tmi\.twitch\.tv)'
+                + r' NOTICE \* :Login unsuccessful\r\n$', data):
             return True
 
     def check_has_message(self, data):
@@ -85,7 +86,9 @@ class Irc:
 
     def parse_message(self, data):
         return {
-            'channel': re.findall(r'^:.+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]+.+ PRIVMSG (.*?) :', data)[0],
+            'channel': re.findall(
+                r'^:.+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]'
+                + r'+.+ PRIVMSG (.*?) :', data)[0],
             'username': re.findall(r'^:([a-zA-Z0-9_]+)\!', data)[0],
             'message': re.findall(r'PRIVMSG #[a-zA-Z0-9_]+ :(.+)', data)[0]
         }
