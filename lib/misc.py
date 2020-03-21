@@ -2,7 +2,7 @@ import time
 from os import system
 
 
-def pp(message, mtype='INFO'):
+def print_debug(message, mtype='INFO'):
     mtype = mtype.upper()
     print('[{}] [{}] {}'.format(time.strftime('%H:%M:%S', time.gmtime()),
                                 mtype, message), flush=True)

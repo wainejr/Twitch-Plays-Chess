@@ -1,5 +1,9 @@
 import time
 
+import sqlite3
+import pprint
+pp = pprint.PrettyPrinter()
+
 from config.config import config
 from lib.botIRC import BotIRC
 from lib.botChess import BotChess
@@ -7,24 +11,31 @@ from lib.botChess import BotChess
 
 class BotHandler:
 
+    DATABASE_PATH = './db/localdb.db'
+
     def __init__(self):
         self.config = config
-        self.chess = BotChess(config['lichess'])
-        exit()
-        self.irc = BotIRC(config['twitch'])
-        self.message_buffer = [
-            {'username': '', 'button': ''}] \
-            * self.config['twitch']['misc']['chat_height']
+        self.bot_chess = BotChess(config['lichess'])
+        self.bot_irc = BotIRC(config['twitch'])
 
-    def set_message_buffer(self, message):
-        self.message_buffer.insert(
-            self.config['twitch']['misc']['chat_height'] - 1, message)
-        self.message_buffer.pop(0)
+    def init_local_database(self):
+        pass
+
+    def add_msgs_to_database(self):
+        pass
 
     def run(self):
-        pass
         while True:
-            new_messages = self.irc.recv_messages(1024)
+            new_messages = self.bot_irc.recv_messages(1024)
 
             if not new_messages:
                 continue
+
+            print(new_messages)
+            for message in new_messages:
+                move = self.bot_chess.get_move_from_msg(message['message'])
+                is_legal = False
+                if(move is not None):
+                    is_legal = self.bot_chess.get_is_move_valid(move)
+
+                print(move, is_legal)

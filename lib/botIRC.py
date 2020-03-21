@@ -2,7 +2,7 @@ import socket
 import sys
 import re
 
-from lib.misc import pp, pbot
+from lib.misc import print_debug, pbot
 
 
 class BotIRC:
@@ -28,7 +28,7 @@ class BotIRC:
         try:
             self.sock.connect((server, port))
         except BaseException:
-            pp('Error connecting to IRC server. ({}:{}) ({})'.format(
+            print_debug('Error connecting to IRC server. ({}:{}) ({})'.format(
                 server, port, self.socket_retry_count + 1), 'error')
 
             if BotIRC.socket_retry_count < 2:
@@ -44,17 +44,17 @@ class BotIRC:
         self.sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
 
         if not self.check_login_status(self.recv()):
-            pp('Invalid login.', 'error')
+            print_debug('Invalid login.', 'error')
             sys.exit()
         else:
-            pp('Login successful!')
+            print_debug('Login successful!')
 
         self.sock.send(bytes('JOIN #{}\r\n'.format(username), encoding='utf-8'))
-        pp('Joined #{}'.format(username))
+        print_debug('Joined #{}'.format(username))
 
     def ping(self, data):
         if data.startswith('PING'):
-            self.sock.send(data.replace('PING', 'PONG'))
+            self.sock.send(bytes(data.replace('PING', 'PONG'), encoding="utf-8"))
 
     def recv(self, amount=1024):
         return self.sock.recv(amount).decode('utf-8')
