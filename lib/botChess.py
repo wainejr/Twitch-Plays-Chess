@@ -1,5 +1,6 @@
-import requests
-import certifi
+import time
+from threading import Thread, Lock
+
 import json
 import pprint
 import chess
@@ -10,55 +11,43 @@ from lib.misc import print_debug
 
 class BotChess:
 
-    URL_BASE = 'https://lichess.org'
-    
-    # Base routes
-    ROUTE_API = URL_BASE + '/api'
-    ROUTE_ACCOUNT = URL_BASE + '/api/account'
-    ROUTE_BOT = URL_BASE + '/api/bot'
-    ROUTE_STREAM = URL_BASE + '/api/stream'
-
-    # Game related routes
-    ROUTE_MOVE = lambda game_id, move: BotChess.ROUTE_BOT \
-                + '/game/' + game_id + '/move/' + move
-
-    ROUTE_RESIGN = lambda game_id: BotChess.ROUTE_BOT \
-                + '/game/' + game_id + '/abort'
-
-    ROUTE_GAME_LIVE = lambda game_id: BotChess.ROUTE_BOT \
-                + '/game/stream/' + game_id
-
-    ROUTE_DRAW_OFFER = lambda game_id, msg: BotChess.ROUTE_BOT \
-                + '/game/stream/' + game_id + '/draw/' + msg
-
-    # Stram related routes
-    ROUTE_STREAM_EVENTS = ROUTE_STREAM + '/event'
-    
-    # Challenge related routes
-    ROUTE_SEEK_GAME = ROUTE_API + '/board/seek'
-
-    # Game state related routes
-    ROUTE_ONGOING_GAMES = ROUTE_ACCOUNT + '/playing'
-
     pp = pprint.PrettyPrinter()
 
     def __init__(self, config):
         self.config = config
-        self.auth_header = {'Authorization': 'Bearer ' + config['token']}
         
+        self.ongoing_games = None
+        self.lock_ongoing_games = Lock()
+
+        self.game_states = {}
+        self.game_move_votes = {}
+
         ret = self.start_session()
         if(ret is None):
             raise Exception(
                 'Unable to connect to lichess API. Check your personal token')
 
         self.board = chess.Board()
-        self.ongoing_games = None
         self.update_ongoing_games()
-        # id_test = self.__get_game_id_test()
-        id_test = self.get_ongoing_games_ids()[0]
-        game = self.get_game_moves(id_test)
-        print(game)
-        # BotChess.pp.pprint(ret)
+
+    def thread_update_ongoing_games(self):
+        while(True):
+            time.sleep(5)
+            self.update_ongoing_games()
+
+    def thread_stream_game_states(self):
+        while(True):
+            for game_id in self.get_ongoing_games_ids():
+                if(game_id not in self.game_states.keys()):
+                    self.stream_game_state(game_id)
+
+    def vote_for_move(self, game_id, move):
+        if(game_id not in self.game_move_votes.keys()):
+            self.game_move_votes[game_id] = dict()
+        if(move not in self.game_move_votes[game_id].keys()):
+            self.game_move_votes[game_id][move] = 0
+        self.game_move_votes[game_id][move] += 1
+        print_debug(f'Voted for {move} in game {game_id}', 'DEBUG')
 
     def start_session(self):
         try:
@@ -69,9 +58,6 @@ class BotChess:
             print_debug('Unable to stablish session\nException: {}'.format(e),
                         'EXCEPTION')
             return None
-
-    def ping_session(self):
-        pass
 
     def get_move_from_msg(self, message):
         command = re.findall(r'!move [a-zA-Z0-9#\-+!?]+' , message)
@@ -86,19 +72,7 @@ class BotChess:
 
     def make_move(self, game_id, move):
         try:
-            r = requests.post(
-                BotChess.ROUTE_MOVE(game_id, move),
-                headers=self.auth_header
-            )
-
-            if(r.status_code != 200):
-                print_debug(
-                    'Error making move {} in game {}\nMessage: {}'.format(
-                    move, game_id, r.text), 'ERROR')
-            else:
-                print_debug('Moved {} in game {}'.format(
-                    move, game_id), 'INFO')
-
+            self.client.bots.make_move(game_id, move)
         except Exception as e:
             print_debug(str(e), 'EXCEPTION')
 
@@ -106,51 +80,37 @@ class BotChess:
         # board.legal_moves prints <LegalMoveGenerator at 0x7ff666656908 (Nh3, ...)>
         return move in str(self.board.legal_moves).split("(")[-1].split(")")[0]
 
-    def stream_game_state(self, game_id, format='pgn'):
+    def stream_game_state(self, game_id):
+        # USE AS THREAD
         try:
+            self.game_states[game_id]['lock'] = Lock()
             for event in self.client.bots.stream_game_state(game_id):
-                print(event)
-                print("s")
+                with self.game_states[game_id]['lock']:
+                    self.game_states[game_id]['game_state'] = event
+            with self.game_states[game_id]['lock']:
+                del self.game_states[game_id]
             return True
         except Exception as e:
+            if(game_id in self.game_states.keys()):
+                del self.game_states[game_id]
             print_debug(str(e), 'EXCEPTION')
             return None
 
     def update_ongoing_games(self):
         try:
-            r = requests.get(
-                BotChess.ROUTE_ONGOING_GAMES,
-                headers=self.auth_header)
-
-            if(r.status_code != 200):
-                print_debug('Unable to get ongoing games\nMessage: {}'.format(
-                    r.text), 'ERROR')
-            else:
-                self.ongoing_games = r.json()['nowPlaying']
-                print_debug('Updated ongoing games', 'DEBUG')
+            with self.lock_ongoing_games:
+                self.ongoing_games = self.client.games.get_ongoing()
         except Exception as e:
             print_debug('Unable to get ongoing games\nException: {}'.format(e),
                         'EXCEPTION')
 
     def get_ongoing_games_ids(self):
-        if(self.ongoing_games is not None):
-            return [i['gameId'] for i in self.ongoing_games]
-
-    def __get_game_id_test(self):
-        try:
-            r = requests.get(
-                BotChess.URL_BASE + '/tv/channels',
-                headers=self.auth_header
-            )
-
-            return r.json()["Blitz"]["gameId"]
-
-        except Exception as e:
-            print_debug(str(e), 'EXCEPTION')
-            return None
+        with self.lock_ongoing_games:
+            if(self.ongoing_games is not None):
+                return [i['gameId'] for i in self.ongoing_games]
 
     def seek_game(self):
         pass
 
-    def get_is_my_turn(self):
+    def is_my_turn(self, game_id):
         pass
