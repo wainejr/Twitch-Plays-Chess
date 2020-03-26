@@ -9,37 +9,37 @@ import berserk
 
 from lib.misc import print_debug
 
-class BotChess:
+pp = pprint.PrettyPrinter()
 
-    pp = pprint.PrettyPrinter()
+
+class BotChess:
 
     def __init__(self, config):
         self.config = config
         
-        self.ongoing_games = None
+        self.ongoing_games = {}
         self.lock_ongoing_games = Lock()
 
-        self.game_states = {}
-        self.lock_game_states = {}
+        self.game_move_votes = {}
 
         ret = self.start_session()
         if(ret is None):
             raise Exception(
                 'Unable to connect to lichess API. Check your personal token')
 
-        self.update_ongoing_games()
+        # Start threads
+        self.start_thread(self.thread_update_ongoing_games)
+
+    def start_thread(self, thread_func, daemon=False, args=()):
+        thread = Thread(target=thread_func, args=args)
+        thread.daemon = True
+        thread.start()
+        return thread
 
     def thread_update_ongoing_games(self):
         while(True):
             self.update_ongoing_games()
-            time.sleep(5)
-
-    def thread_stream_game_states(self):
-        while(True):
-            for game_id in self.get_ongoing_games_ids():
-                if(game_id not in self.game_states.keys()):
-                    self.stream_game_state(game_id)
-            time.sleep(5)
+            time.sleep(1)
 
     def vote_for_move(self, game_id, move):
         if(game_id not in self.game_move_votes.keys()):
@@ -77,55 +77,41 @@ class BotChess:
             print_debug(str(e), 'EXCEPTION')
 
     def get_is_move_valid(self, move, game_id=None):
-        if(game_id is None or game_id not in self.game_states.keys()):
-            if(game_id not in self.game_states.keys()):
+        if(game_id is None or game_id not in self.ongoing_games.keys()):
+            if(game_id not in self.ongoing_games.keys()):
                 print_debug(f'State of game {game_id} not available to ' +
-                            'get is move valid')
-            # board.legal_moves prints <LegalMoveGenerator at 0x7ff666656908 (Nh3, ...)>
+                            'get is move valid', 'DEBUG')
+                return False
             board = chess.Board()
+        elif(self.is_my_turn(game_id)):
+            game = self.ongoing_games[game_id]
+            board = chess.Board(fen=game['fen'])
+            board.turn = game['color'] == 'white'
         else:
-            # TODO: load from game state
-            board = chess.Board()
+            print_debug(f'Not my turn in game {game_id}', 'DEBUG')
+            return False
 
-        return move in str(board.legal_moves).split("(")[-1].split(")")[0]
+        return move.lower() in self.get_legal_moves(board)
 
-    def stream_game_state(self, game_id):
-        # USE AS THREAD
-        self.lock_game_states[game_id] = Lock()
-        self.game_states[game_id]['board'] = chess.Board()
-        try:
-            for event in self.client.bots.stream_game_state(game_id):
-                with self.lock_game_states[game_id]:
-                    self.game_states[game_id]['game_state'] = event
-                    self.game_states[game_id]['board'] = event
-                    
-            with self.lock_game_states[game_id]:
-                del self.game_states[game_id]
-            del self.lock_game_states[game_id]
-
-            return True
-        except Exception as e:
-            if(game_id in self.game_states.keys()):
-
-                del self.game_states[game_id]
-            print_debug(str(e), 'EXCEPTION')
-            return None
+    def get_legal_moves(self, board):
+        # board.legal_moves prints <LegalMoveGenerator at 0x7ff666656908 (Nh3, ..., a5)>
+        # returns ['nh3', ... , 'a5']
+        return str(board.legal_moves).split("(")[-1].split(")")[0].replace(
+            ',','').lower().split(' ')
 
     def update_ongoing_games(self):
         try:
             with self.lock_ongoing_games:
-                self.ongoing_games = self.client.games.get_ongoing()
+                games = self.client.games.get_ongoing()
+                for game in games:
+                    self.ongoing_games[game['gameId']] = game
         except Exception as e:
             print_debug('Unable to get ongoing games\nException: {}'.format(e),
                         'EXCEPTION')
-
-    def get_ongoing_games_ids(self):
-        with self.lock_ongoing_games:
-            if(self.ongoing_games is not None):
-                return [i['gameId'] for i in self.ongoing_games]
 
     def seek_game(self):
         pass
 
     def is_my_turn(self, game_id):
-        pass
+        if game_id in self.ongoing_games.keys():
+            return self.ongoing_games[game_id]['isMyTurn']
