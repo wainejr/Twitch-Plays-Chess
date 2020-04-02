@@ -34,8 +34,7 @@ class BotHandler:
             print(new_messages)
             for message in new_messages:
                 move = self.bot_chess.get_move_from_msg(message['message'])
-                is_legal = False
-                if(move is not None):
-                    is_legal = self.bot_chess.get_is_move_valid(move)
-
-                print(move, is_legal)
+                games_ids = self.bot_chess.get_ongoing_game_ids()
+                print(move, games_ids)
+                if(move is not None and len(games_ids) > 0):
+                    self.bot_chess.vote_for_move(games_ids[0], move)
