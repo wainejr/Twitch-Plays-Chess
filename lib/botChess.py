@@ -1,6 +1,8 @@
 import time
 from threading import Thread, Lock
+import os
 
+import requests
 import json
 import pprint
 import chess
@@ -13,7 +15,7 @@ pp = pprint.PrettyPrinter()
 
 class BotChess:
 
-    uci_pattern = re.compile("[a-h][1-8][a-h][1-8]")
+    UCI_PATTERN = re.compile("[a-h][1-8][a-h][1-8]")
 
     def __init__(self, config, mode='anarchy'):
         self.config = config
@@ -37,9 +39,9 @@ class BotChess:
         self.start_thread(self.thread_update_ongoing_games)
         self.start_thread(self.thread_games_handler)
 
-    def start_thread(self, thread_func, daemon=False, args=()):
+    def start_thread(self, thread_func, daemon=True, args=()):
         thread = Thread(target=thread_func, args=args)
-        thread.daemon = True
+        thread.daemon = daemon
         thread.start()
         return thread
 
@@ -58,6 +60,9 @@ class BotChess:
                         self.start_thread(
                             self.thread_make_move_handler, args=(game_id, ))
             time.sleep(0.5)
+
+    def get_account_info(self):
+        return self.client.account.get()
 
     def thread_make_move_handler(self, game_id):
         while(True):
@@ -122,15 +127,19 @@ class BotChess:
             self.client = berserk.Client(self.session)
             return True
         except Exception as e:
-            print_debug('Unable to stablish session\nException: {}'.format(e),
+            print_debug(f'Unable to stablish session\nException: {e}',
                         'EXCEPTION')
             return None
 
     def get_move_from_msg(self, message, uci=False):
+        # messages must be as "e4" "Nc3", not "move Nc4" "e7 is a great move"
+        if(" " in message):
+            return None
+
         if(uci):
-            command = re.findall(r'!move [a-h][1-8][a-h][1-8]', message)
+            command = re.findall(r'[a-h][1-8][a-h][1-8]', message)
         else:
-            command = re.findall(r'!move [a-zA-Z0-9#+!?\-]+' , message)
+            command = re.findall(r'[a-zA-Z0-9#+!?\-]+' , message)
         if(len(command) == 0):
             return None
 
@@ -163,11 +172,27 @@ class BotChess:
                     self.ongoing_games[game['gameId']] = game
 
         except Exception as e:
-            print_debug('Unable to get ongoing games\nException: {}'.format(e),
+            print_debug(f'Unable to get ongoing games\nException: {e}',
                         'EXCEPTION')
 
-    def seek_game(self):
-        pass
+    def create_challenge(self, username, rated=True, clock_min=3, clock_incr_sec=2):
+        try:
+            self.client.challenges.create(
+                username, rated, clock_limit=clock_min,
+                clock_increment=clock_incr_sec)
+        except Exception as e:
+            print_debug(f'Unable to create challenge. Exception: {e}', 'EXCEPTION')
+
+    def seek_game(self, rated=True, clock_min=3, clock_incr_sec=2):
+        try:
+            r = requests.post("http://www.lichess.org/api/board/seek", 
+                params={'rated': str(rated), 
+                    'time': clock_min, 
+                    'incremet': clock_incr_sec},
+                headers={'Authorization': 'Bearer ' + self.config['token']})
+            print(r.text)
+        except Exception as e:
+            print_debug(f'Unable to seek game. Exception: {e}', 'EXCEPTION')
 
     def is_my_turn(self, game_id):
         if game_id in self.ongoing_games.keys():
@@ -187,4 +212,4 @@ class BotChess:
         return None
     
     def get_is_uci(self, move):
-        return BotChess.uci_pattern.match(move)
+        return BotChess.UCI_PATTERN.match(move)

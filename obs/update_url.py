@@ -1,5 +1,6 @@
 import os
 
+import json
 import obspython as obs
 
 abs_path = os.path.dirname(os.path.abspath(__file__))
@@ -39,11 +40,13 @@ def update_text():
             filename = os.path.join(abs_path, file_input)
 
         if(os.path.exists(filename)):
-            with open(filename, 'r') as f:
-                url = f.read()
-                if(url != curr_url):
-                    update_curr_url(source, url)
-
+            try:
+                with open(filename, 'r') as f:
+                    url = json.load(f)["url"]
+                    if(url != curr_url):
+                        update_curr_url(source, url)
+            except Exception as e:
+                print(f"Unable to read URL from json {filename}. Exception: {e}")
         obs.obs_source_release(source)
 
 def refresh_pressed(props, prop):
@@ -52,7 +55,7 @@ def refresh_pressed(props, prop):
 # ------------------------------------------------------------
 
 def script_description():
-    return ""
+    return "Reads 'url' field from json and updates it in browser source\n\nby Waine"
 
 
 def script_update(settings):
@@ -77,11 +80,11 @@ def script_defaults(settings):
 def script_properties():
     props = obs.obs_properties_create()
     obs.obs_properties_add_text(
-        props, "file_input", "Read from", obs.OBS_TEXT_DEFAULT)
+        props, "file_input", "Read from (json)", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_int(
-        props, "interval", "Update Interval (seconds)", 5, 3600, 1)
+        props, "interval", "Update Interval (seconds)", 1, 3600, 1)
 
-    p = obs.obs_properties_add_list(props, "source", "URL Source", 
+    p = obs.obs_properties_add_list(props, "source", "Browse Source", 
         obs.OBS_COMBO_TYPE_EDITABLE, obs.OBS_COMBO_FORMAT_STRING)
 
     sources = obs.obs_enum_sources()
