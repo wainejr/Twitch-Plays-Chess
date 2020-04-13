@@ -86,13 +86,9 @@ class BotChess:
                         player = self.client.users.get_by_id(player_id)
                         # If opponent player is not online, resigns
                         if(not player[0]['online']):
-                            try:
-                                self.client.bots.resign_game(game_id)
-                                print_debug(f"Resigned in game {game_id}, {player} offline",
-                                    "DEBUG")
-                            except Exception as e:
-                                print_debug(f"Unable to resign game {game_id} against {player_id}." 
-                                    + f" Exception: {e}")
+                            print_debug(f"Opponent {player_id} offline."
+                                + " Resigning", "DEBUG")
+                            self.resign_game(game_id)
                     except Exception as e:
                         print_debug(f"Unable to get player {player_id}." 
                             + f" Exception: {e}")
@@ -138,7 +134,8 @@ class BotChess:
             # Updates ongoing games to avoid concurrence problems
             self.update_ongoing_games()
             ret = len(self.ongoing_games) == 0
-        ret = ret and event["type"] == "challenge" and (not event["challenge"]["rated"])
+        ret = ret and event["type"] == "challenge" \
+            and (not event["challenge"]["rated"])
         return ret
 
     def get_account_info(self):
@@ -146,7 +143,8 @@ class BotChess:
             # Gets current user account info
             return self.client.account.get()
         except Exception as e:
-            print_debug(f'Unable to get account info. Exception: {e}', 'EXCEPTION')
+            print_debug(f'Unable to get account info. Exception: {e}',
+                'EXCEPTION')
             return None
 
     def vote_for_move(self, game_id, move):
@@ -168,8 +166,8 @@ class BotChess:
                     # Tries to make move, if not succeeded, move is invalid.
                     move = board.parse_san(move)
                 except Exception as e:
-                    print_debug(f'Unable to vote for {move} in game {game_id}. ' +
-                        f'Exception: {e}', 'DEBUG')
+                    print_debug(f'Unable to vote for {move} in game '
+                        f'{game_id}. Exception: {e}', 'DEBUG')
                     return False
 
             # Creates dict of voted moves for game, if it does not exists
@@ -247,7 +245,8 @@ class BotChess:
             print_debug(f'Unable to get ongoing games\nException: {e}',
                         'EXCEPTION')
 
-    def create_challenge(self, username, rated=True, clock_sec=180, clock_incr_sec=2):
+    def create_challenge(self, username, rated=True, clock_sec=180, 
+                         clock_incr_sec=2):
         try:
             self.client.challenges.create(
                 username, rated, clock_limit=clock_sec,
@@ -255,7 +254,8 @@ class BotChess:
             print_debug(f"Created challenge against {username}")
 
         except Exception as e:
-            print_debug(f'Unable to create challenge. Exception: {e}', 'EXCEPTION')
+            print_debug(f'Unable to create challenge. Exception: {e}', 
+                'EXCEPTION')
 
     def seek_game(self, rated=True, clock_min=3, clock_incr_sec=2):
         try:
@@ -270,8 +270,17 @@ class BotChess:
             print_debug(f'Unable to seek game. Exception: {e}', 'EXCEPTION')
 
     def is_my_turn(self, game_id):
-        if game_id in self.ongoing_games.keys():
-            return self.ongoing_games[game_id]['isMyTurn']
+        with self.lock_ongoing_games:
+            if game_id in self.ongoing_games.keys():
+                return self.ongoing_games[game_id]['isMyTurn']
+
+    def resign_game(self, game_id):
+        try:
+            self.client.bots.resign_game(game_id)
+            print_debug(f"Resigned in game {game_id}", "DEBUG")
+        except Exception as e:
+            print_debug(f"Unable to resign game {game_id}." 
+                + f" Exception: {e}")
 
     def get_ongoing_game_ids(self):
         with self.lock_ongoing_games:
