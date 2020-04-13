@@ -23,7 +23,7 @@ class BotHandler:
         self.config = config
         self.bot_chess = BotChess(config['lichess'])
         self.bot_irc = BotIRC(config['twitch'])
-        
+
         self.game_ids = []
         self.lock_game_ids = Lock()
 
@@ -117,13 +117,15 @@ class BotHandler:
             if not has_updated_wdl and len(games_ids) == 0:
                 # Gets account info
                 acc_info = self.bot_chess.get_account_info()
-                # Gets wins, draws and losses
-                wins, draws, losses = acc_info['count']['win'], \
-                    acc_info['count']['draw'], acc_info['count']['loss']
-                # Updates local json
-                self.update_obs_json_WDL(wins, draws, losses)
 
-                has_updated_wdl = True
+                if(acc_info is not None):
+                    # Gets wins, draws and losses
+                    wins, draws, losses = acc_info['count']['win'], \
+                        acc_info['count']['draw'], acc_info['count']['loss']
+                    # Updates local json
+                    self.update_obs_json_WDL(wins, draws, losses)
+
+                    has_updated_wdl = True
 
             # Update URL that OBS is reading from
             if(len(games_ids) > 0):

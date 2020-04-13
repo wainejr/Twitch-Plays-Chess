@@ -38,12 +38,23 @@ class BotChess:
         # Start threads
         self.start_thread(self.thread_update_ongoing_games)
         self.start_thread(self.thread_games_handler)
+        self.start_thread(self.thread_treat_incoming_events)
 
     def start_thread(self, thread_func, daemon=True, args=()):
         thread = Thread(target=thread_func, args=args)
         thread.daemon = daemon
         thread.start()
         return thread
+
+    def thread_treat_incoming_events(self):
+        for event in self.client.bots.stream_incoming_events():
+            print("event", event)
+            if(self.validate_challenge_event(event)):
+
+                self.client.challenges.accept(event['challenge']['id'])
+
+                print_debug("Accepted challenge by" +
+                    f"{event['challenge']['challenger']['id']}")
 
     def thread_update_ongoing_games(self):
         while(True):
@@ -60,9 +71,6 @@ class BotChess:
                         self.start_thread(
                             self.thread_make_move_handler, args=(game_id, ))
             time.sleep(0.5)
-
-    def get_account_info(self):
-        return self.client.account.get()
 
     def thread_make_move_handler(self, game_id):
         while(True):
@@ -91,6 +99,22 @@ class BotChess:
         with(self.lock_thread_games):
             self.thread_games.remove(game_id)
         print_debug(f'Finished game {game_id}', 'DEBUG')
+
+    def validate_challenge_event(self, event):
+        # The event must be a challenge, must not be rated and 
+        # there must be no games going on
+        with self.lock_ongoing_games:
+            ret = len(self.ongoing_games) == 0
+        ret = ret and event["type"] == "challenge" and (not event["challenge"]["rated"])
+        print(ret)
+        return ret
+
+    def get_account_info(self):
+        try:
+            return self.client.account.get()
+        except Exception as e:
+            print_debug(f'Unable to get account info. Exception: {e}', 'EXCEPTION')
+            return None
 
     def vote_for_move(self, game_id, move):
         with(self.lock_game_move_votes):
@@ -175,11 +199,13 @@ class BotChess:
             print_debug(f'Unable to get ongoing games\nException: {e}',
                         'EXCEPTION')
 
-    def create_challenge(self, username, rated=True, clock_min=3, clock_incr_sec=2):
+    def create_challenge(self, username, rated=True, clock_sec=180, clock_incr_sec=2):
         try:
             self.client.challenges.create(
-                username, rated, clock_limit=clock_min,
+                username, rated, clock_limit=clock_sec,
                 clock_increment=clock_incr_sec)
+            print_debug(f"Created challenge against {username}")
+
         except Exception as e:
             print_debug(f'Unable to create challenge. Exception: {e}', 'EXCEPTION')
 
