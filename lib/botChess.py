@@ -17,9 +17,10 @@ class BotChess:
 
     UCI_PATTERN = re.compile("[a-h][1-8][a-h][1-8]")
 
-    def __init__(self, config, mode='anarchy'):
+    def __init__(self, config, bot_handler, mode='anarchy'):
         self.config = config
         self.mode = mode
+        self.bot_handler = bot_handler
 
         self.ongoing_games = {}
         self.lock_ongoing_games = Lock()
@@ -120,7 +121,11 @@ class BotChess:
                         self.game_move_votes[game_id] = {}
                     else: # remove move if not succeeded
                         del self.game_move_votes[game_id][move]
+
                 # TODO: Democracy mode
+
+                # Resets the users that voted for a move in this game
+                self.bot_handler.reset_users_voted_moves(game_id)
 
         # Removes game from thread_games and finishes the thread
         with(self.lock_thread_games):

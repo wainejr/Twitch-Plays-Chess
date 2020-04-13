@@ -71,6 +71,7 @@ class BotIRC:
         if self.check_has_message(data) is not None:
             return [self.parse_message(line)
                     for line in filter(None, data.split('\r\n'))]
+        return None
 
     def check_login_status(self, data):
         if not re.match(
