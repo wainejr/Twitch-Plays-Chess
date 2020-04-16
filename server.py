@@ -2,7 +2,7 @@
 
 from sys import exit
 from config.config import config
-from lib.botHandler import BotHandler
+from bots.botHandler import BotHandler
 
 # Twitch Plays
 

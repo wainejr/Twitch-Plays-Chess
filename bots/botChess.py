@@ -16,6 +16,9 @@ pp = pprint.PrettyPrinter()
 class BotChess:
 
     UCI_PATTERN = re.compile("[a-h][1-8][a-h][1-8]")
+    RESIGN_MOVE_STR = 'resign'
+    MIN_RESIGN_VOTES = 1
+    MIN_RESIGN_PERCENTAGE_VOTES = 0.1
 
     def __init__(self, config, bot_handler, mode='anarchy'):
         self.config = config
@@ -58,8 +61,9 @@ class BotChess:
                         f"{event['challenge']['challenger']['id']}")
                 else:  # Otherwise, declines it
                     self.client.challenges.decline(event['challenge']['id'])
-                    print_debug("Declined challenge by" +
+                    print_debug("Declined challenge by " +
                         f"{event['challenge']['challenger']['id']}")
+        print_debug("Finished incoming events thread", "DEBUG")
 
     def thread_update_ongoing_games(self):
         while(True):
@@ -113,10 +117,37 @@ class BotChess:
                 if(len(moves) == 0):
                     continue
 
+                # Treats resign move vote
+                if(BotChess.RESIGN_MOVE_STR in moves):
+                    # Get total number of votes
+                    total_votes = sum(
+                        [self.game_move_votes[game_id][m] for m in moves])
+                    # Get number of resign votes
+                    resign_votes = self.game_move_votes[game_id]\
+                        [BotChess.RESIGN_MOVE_STR]
+                    # If there is more than the minimum resign votes and
+                    # the percentage of resign votes is more than required,
+                    # resigns the game
+                    if(total_votes >= BotChess.MIN_RESIGN_VOTES and
+                       resign_votes/total_votes >= 
+                       BotChess.MIN_RESIGN_PERCENTAGE_VOTES):
+                        self.resign_game(game_id)
+
                 # Performs "random" voted move if mode is anarchy
                 if(self.mode == 'anarchy'):
                     move = moves[0]
+
+                    # If the move chosen was to resign, but there is more than
+                    # one move to choose, pick another
+                    if(move == BotChess.RESIGN_MOVE_STR):
+                        if(len(moves) >= 2):
+                            move = moves[1]
+                        else:  # If there is only resign move, continues
+                            continue
+
+                    # Makes move
                     ret = self.make_move(game_id, move)
+
                     if(ret):# remove all votes if succeeded
                         self.game_move_votes[game_id] = {}
                     else: # remove move if not succeeded
@@ -124,7 +155,8 @@ class BotChess:
 
                 # TODO: Democracy mode
 
-                # Resets the users that voted for a move in this game
+                # Resets the users that voted for a move in this game 
+                # because if it gets to here, a move was made or at least tried
                 self.bot_handler.reset_users_voted_moves(game_id)
 
         # Removes game from thread_games and finishes the thread
@@ -133,14 +165,16 @@ class BotChess:
         print_debug(f'Finished game {game_id}', 'DEBUG')
 
     def validate_challenge_event(self, event):
+        # Updates ongoing games to avoid concurrence problems
+        self.update_ongoing_games()
+
         # The event must be a challenge, must not be rated and 
         # there must be no games going on
         with self.lock_ongoing_games:
-            # Updates ongoing games to avoid concurrence problems
-            self.update_ongoing_games()
             ret = len(self.ongoing_games) == 0
         ret = ret and event["type"] == "challenge" \
             and (not event["challenge"]["rated"])
+
         return ret
 
     def get_account_info(self):
@@ -151,6 +185,21 @@ class BotChess:
             print_debug(f'Unable to get account info. Exception: {e}',
                 'EXCEPTION')
             return None
+
+    def vote_for_resign(self, game_id):
+        with(self.lock_game_move_votes):
+            # Creates dict of voted moves for game, if it does not exists
+            if(game_id not in self.game_move_votes.keys()):
+                self.game_move_votes[game_id] = dict()
+            # Creates 'resign' move for game_id, if it does not exists
+            if(BotChess.RESIGN_MOVE_STR not in self.game_move_votes[game_id].keys()):
+                self.game_move_votes[game_id][BotChess.RESIGN_MOVE_STR] = 0
+            # Votes for resign
+            self.game_move_votes[game_id][BotChess.RESIGN_MOVE_STR] += 1
+
+            print_debug(f'Voted for resign in game {game_id}', 'DEBUG')
+
+        return True
 
     def vote_for_move(self, game_id, move):
         with(self.lock_game_move_votes):
@@ -291,6 +340,12 @@ class BotChess:
         with self.lock_ongoing_games:
             return list(self.ongoing_games.keys())
     
+    def get_id_last_game_played(self):
+        account = self.get_account_info()
+        games = self.client.games.export_by_player(account["username"], max=1)
+        for game in games:
+            return game["id"]
+
     def get_board_from_game(self, game_id):
         with(self.lock_ongoing_games):
             # Check if game exists
