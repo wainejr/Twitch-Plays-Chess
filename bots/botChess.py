@@ -1,17 +1,12 @@
 import time
 from threading import Thread, Lock
-import os
 
 import requests
-import json
-import pprint
 import chess
 import re
 import berserk
 
 from lib.misc import print_debug
-
-pp = pprint.PrettyPrinter()
 
 class BotChess:
 
@@ -21,6 +16,21 @@ class BotChess:
     MIN_RESIGN_PERCENTAGE_VOTES = 0.1
 
     def __init__(self, config, bot_handler, mode='anarchy'):
+        """ BotChess constructor
+        
+        Arguments:
+            config {dict} -- Lichess API configuration ('token')
+            bot_handler {BotHandler} -- Bot Handler to inform when a 
+                move is made.
+        
+        Keyword Arguments:
+            mode {str} -- Mode to process game move votes 
+                (default: {'anarchy'})
+        
+        Raises:
+            Exception: Unable to connect to Lichess API
+        """
+
         self.config = config
         self.mode = mode
         self.bot_handler = bot_handler
@@ -35,7 +45,7 @@ class BotChess:
         self.lock_thread_games = Lock()
 
         ret = self.start_session()
-        if(ret is None):
+        if(not ret):
             raise Exception(
                 'Unable to connect to lichess API. Check your personal token')
 
@@ -45,12 +55,28 @@ class BotChess:
         self.start_thread(self.thread_treat_incoming_events)
 
     def start_thread(self, thread_func, daemon=True, args=()):
+        """ Starts new thread
+
+        Arguments:
+            thread_func {function} -- Thread target function
+        
+        Keyword Arguments:
+            daemon {bool} -- Thread is daemonized or not (daemonized threads
+                allows the program to end without it being finished)
+                (default: {True})
+            args {tuple} -- Functions arguments (default: {()})
+        
+        Returns:
+            Thread -- Object of the started thread 
+        """
+
         thread = Thread(target=thread_func, args=args)
         thread.daemon = daemon
         thread.start()
         return thread
 
     def thread_treat_incoming_events(self):
+        """ Thread to treat incoming events from Lichess API """
         while(True):
             try:
                 for event in self.client.bots.stream_incoming_events():
@@ -60,13 +86,19 @@ class BotChess:
                     'ERROR')
 
     def thread_update_ongoing_games(self):
+        """ Thread to update ongoing games """
         while(True):
             self.update_ongoing_games()
             time.sleep(1)
 
     def thread_games_handler(self):
+        """ Thread to handle ongoing games 
+            (resign, start other threads, etc.)
+        """
+
         while(True):
             time.sleep(0.5)
+
             with(self.lock_ongoing_games):
                 for game_id in self.ongoing_games.keys():
                     # Add thread to treat moves if not started yet
@@ -99,6 +131,12 @@ class BotChess:
                             + f" Exception: {e}")
 
     def thread_make_move_handler(self, game_id):
+        """ Handle move votes and makes moves in game with given ID
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+        """
+
         while(True): # Runs ultil game has ended
             time.sleep(0.5)
 
@@ -165,6 +203,12 @@ class BotChess:
         print_debug(f'Finished game {game_id}', 'DEBUG')
 
     def treat_incoming_event(self, event):
+        """ Treats an incoming event from Lichess API
+
+        Arguments:
+            event {dict} -- Dictionary with event informations
+        """
+
         # If the event is a challenge
         if(event["type"] == "challenge"):
             # If the challenge is validated, accepts it
@@ -178,6 +222,16 @@ class BotChess:
                     f"{event['challenge']['challenger']['id']}")
 
     def validate_challenge_event(self, event):
+        """ Validates a challenge incming event, if it must be accepted
+            or declined
+
+        Arguments:
+            event {dict} -- Dictionary with event informations
+
+        Returns:
+            bool -- True to accept, False to decline
+        """
+
         # Updates ongoing games to avoid concurrence problems
         self.update_ongoing_games()
 
@@ -191,6 +245,13 @@ class BotChess:
         return ret
 
     def get_account_info(self):
+        """ Get current account info
+
+        Returns:
+            dict or None -- Dictionary with account info or 
+                None in case of error
+        """
+
         try:
             # Gets current user account info
             return self.client.account.get()
@@ -200,6 +261,15 @@ class BotChess:
             return None
 
     def vote_for_resign(self, game_id):
+        """ Vote to resign in game with given ID
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+        
+        Returns:
+            c -- True in case of success, False otherwise
+        """
+
         with(self.lock_game_move_votes):
             # Creates dict of voted moves for game, if it does not exists
             if(game_id not in self.game_move_votes.keys()):
@@ -215,6 +285,16 @@ class BotChess:
         return True
 
     def vote_for_move(self, game_id, move):
+        """ Votes for given move in given game
+        
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+            move {str} -- Move in UCI or SAN
+        
+        Returns:
+            bool -- True in case of success, False otherwise
+        """
+
         with(self.lock_game_move_votes):
             # Validates move
             if(not self.get_is_move_fmt_valid(move)):
@@ -250,6 +330,12 @@ class BotChess:
         return True
 
     def start_session(self):
+        """ Starts session with Lichess API
+
+        Returns:
+            bool -- True in case of success, False otherwise
+        """
+
         try:
             # Stablish session
             self.session = berserk.TokenSession(self.config['token'])
@@ -259,9 +345,21 @@ class BotChess:
         except Exception as e:
             print_debug(f'Unable to stablish session\nException: {e}',
                         'EXCEPTION')
-            return None
+            return False
 
     def get_move_from_msg(self, message, uci=False):
+        """ Gets move from message
+
+        Arguments:
+            message {str} -- Message to get move from
+
+        Keyword Arguments:
+            uci {bool} -- True to only get UCI moves (default: {False})
+
+        Returns:
+            str or None -- Move string or None in case it did not find move
+        """
+
         # Messages must be as "e4" "Nc3" "e7e5", 
         # not "move Nc4" "e7 is a great move"
         if(" " in message):
@@ -269,6 +367,7 @@ class BotChess:
 
         # Gets only UCI format
         if(uci):
+            # TODO: use pattern in BotChes.UCI_PATTERN
             move = re.findall(r'[a-h][1-8][a-h][1-8]', message)
         else:
             # Gets any first word
@@ -279,6 +378,16 @@ class BotChess:
         return move[0]
 
     def make_move(self, game_id, move):
+        """ Makes given move in given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+            move {str} -- Move in UCI
+
+        Returns:
+            bool -- True in case of success, False otherwise
+        """
+
         try:
             # Must recieve an UCI
             self.client.bots.make_move(game_id, move)
@@ -289,6 +398,15 @@ class BotChess:
             return False
 
     def get_is_move_fmt_valid(self, move):
+        """ Check if move string format is valid
+
+        Arguments:
+            move {str} -- Move string
+
+        Returns:
+            bool -- True if move format is valid, False otherwise
+        """
+
         # If move is UCI, considers valid
         if(not self.get_is_uci(move)):
             # Tries to parse SAN move
@@ -298,6 +416,8 @@ class BotChess:
         return True
 
     def update_ongoing_games(self):
+        """ Update ongoing games given by Lichess API """
+
         games = []
 
         # Tries to get ongoing games. If it is not able, returns
@@ -316,8 +436,19 @@ class BotChess:
             for game in games:
                 self.ongoing_games[game['gameId']] = game
 
-    def create_challenge(self, username, rated=True, clock_sec=180, 
+    def create_challenge(self, username, rated=False, clock_sec=180, 
                          clock_incr_sec=2):
+        """ Creates challenge against user with given parameters
+        
+        Arguments:
+            username {str} -- User to create challenge against
+        
+        Keyword Arguments:
+            rated {bool} -- Game is rated or not (default: {False})
+            clock_sec {int} -- Clock time in seconds (default: {180})
+            clock_incr_sec {int} -- Clock increment in seconds (default: {2})
+        """
+
         try:
             self.client.challenges.create(
                 username, rated, clock_limit=clock_sec,
@@ -329,6 +460,14 @@ class BotChess:
                 'EXCEPTION')
 
     def seek_game(self, rated=True, clock_min=3, clock_incr_sec=2):
+        """ Seek a game with given parameters
+        
+        Keyword Arguments:
+            rated {bool} -- Game is rated or not (default: {True})
+            clock_sec {int} -- Clock time in minutes (default: {3})
+            clock_incr_sec {int} -- Clock increment in seconds (default: {2})
+        """
+
         try:
             # Tries to seek game. Unable to do so using BOT accounts :(
             r = requests.post("http://www.lichess.org/api/board/seek", 
@@ -341,29 +480,71 @@ class BotChess:
             print_debug(f'Unable to seek game. Exception: {e}', 'EXCEPTION')
 
     def is_my_turn(self, game_id):
+        """ Get if is my turn in given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+
+        Returns:
+            bool -- True if it is my turn, False otherwise
+        """
+
         with self.lock_ongoing_games:
             if game_id in self.ongoing_games.keys():
                 return self.ongoing_games[game_id]['isMyTurn']
 
     def resign_game(self, game_id):
+        """ Resign in given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+
+        Returns:
+            bool -- True in case of success, False otherwise
+        """
+
         try:
             self.client.bots.resign_game(game_id)
             print_debug(f"Resigned in game {game_id}", "DEBUG")
+            return True
         except Exception as e:
             print_debug(f"Unable to resign game {game_id}." 
                 + f" Exception: {e}")
+            return False
 
     def get_ongoing_game_ids(self):
+        """ Get list of ongoing game IDs
+        
+        Returns:
+            list -- List of ongoing game IDs
+        """
+
         with self.lock_ongoing_games:
             return list(self.ongoing_games.keys())
-    
+
     def get_id_last_game_played(self):
+        """ Get Lichess game ID of the last game played
+        
+        Returns:
+            str -- Lichess game ID
+        """
+
         account = self.get_account_info()
         games = self.client.games.export_by_player(account["username"], max=1)
         for game in games:
             return game["id"]
 
     def get_board_from_game(self, game_id):
+        """ Gets board from given game
+        
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+        
+        Returns:
+            chess.Board or None -- Game board in case of success, 
+                None otherwise
+        """
+
         with(self.lock_ongoing_games):
             # Check if game exists
             if(game_id in self.ongoing_games.keys()):
@@ -377,4 +558,12 @@ class BotChess:
         return None
 
     def get_is_uci(self, move):
+        """ Check if move string is UCI
+        
+        Arguments:
+            move {str} -- Move string
+        
+        Returns:
+            bool -- True if it is UCI move, False otherwise
+        """
         return BotChess.UCI_PATTERN.match(move)

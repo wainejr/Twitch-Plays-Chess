@@ -4,8 +4,6 @@ from threading import Lock, Thread
 import copy as cp
 
 import json
-import pprint
-pp = pprint.PrettyPrinter()
 
 from config.config import config
 from bots.botIRC import BotIRC
@@ -14,14 +12,22 @@ from lib.misc import print_debug
 
 
 class BotHandler:
+    """ Class to handle Bots """
 
+    # json file used by OBS to update its scenes
     PATH_OBS_JSON = './obs/info.json'
     # COMMANDS MUST START WITH '!'
     MSG_COMMANDS = ['!resign', '!challenge']
 
     def __init__(self):
+        """ BotHandler constructor """
+
+        # Bots configurations
         self.config = config
+
+        # Create BotChess object
         self.bot_chess = BotChess(config['lichess'], self)
+        # Create BotIRC object
         self.bot_irc = BotIRC(config['twitch'])
 
         # Current game ids
@@ -36,6 +42,7 @@ class BotHandler:
         self.resign_votes = {}
 
     def run(self):
+        """ Run BotHandler (start program) """
         # Start game_id checking thread
         self.thread_games = Thread(
             target=self.thread_update_game_ids, daemon=True)
@@ -54,6 +61,8 @@ class BotHandler:
             time.sleep(10)
 
     def thread_update_game_ids(self):
+        """ Thread to update current games IDs """
+
         while True:
             time.sleep(0.2)
             with self.lock_game_ids:
@@ -61,6 +70,8 @@ class BotHandler:
 
 
     def thread_twitch_chat(self):
+        """ Thread to listen messages in Twitch chat and treat them """
+
         while True:
             time.sleep(0.2)
 
@@ -87,6 +98,8 @@ class BotHandler:
                     self.treat_move_msg(move, message)
 
     def thread_obs_update(self):
+        """ Thread to update OBS json file """
+
         last_json = self.get_obs_info_json()
         has_updated_wdl = False
 
@@ -114,6 +127,9 @@ class BotHandler:
             # Update URL that OBS is reading from
             if(len(games_ids) > 0):
                 # Set the Wins, Draws and losses as not updated
+                has_updated_wdl = False
+
+                # Gets current game ID
                 game_id = games_ids[0]
                 # If the game_id has changed, updates OBS json
                 if(game_id != self.get_game_id_from_url(last_json["url"])):
@@ -121,6 +137,13 @@ class BotHandler:
                     last_json = self.get_obs_info_json()
 
     def treat_move_msg(self, move, msg_dict):
+        """ Treats message with a move
+
+        Arguments:
+            move {str} -- Move string
+            msg_dict {dict} -- Dictionary with message info
+        """
+
         # Get copy of current game ids
         cp_game_ids = self.get_game_ids()
         if(len(cp_game_ids) == 0):
@@ -143,6 +166,13 @@ class BotHandler:
             self.set_user_as_already_voted(game_id, msg_dict['username'])
 
     def treat_command(self, command, msg_dict):
+        """ Treats command from message
+
+        Arguments:
+            command {dict} -- Dictionary as {"!command_name": command_msg}
+            msg_dict {dict} -- Dictionary with message info
+        """
+
         # Treats !resign command
         if('!resign' in command.keys()):
             # Gets copy of game ids
@@ -165,12 +195,25 @@ class BotHandler:
             pass
 
     def reset_users_voted_moves(self, game_id):
+        """ Reset users that voted in given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+        """
+
         with self.lock_users_already_voted:
             if(game_id not in self.users_already_voted.keys()):
-                return None
+                return
             self.users_already_voted[game_id] = []
 
     def set_user_as_already_voted(self, game_id, user):
+        """ Set given user as already voted in given game 
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+            user {str} -- User in Twitch
+        """
+
         with self.lock_users_already_voted:
             # Adds list of users that already voted in game_id
             # if it has not been created yet
@@ -182,6 +225,16 @@ class BotHandler:
                 self.users_already_voted[game_id].append(user)
 
     def get_has_user_already_voted(self, game_id, user):
+        """ Get if given user has already voted in given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+            user {str} -- User in Twitch
+
+        Returns:
+            bool -- True if user has already voted, False otherwise
+        """
+
         with self.lock_users_already_voted:
             # If there's no list of users yet
             if(game_id not in self.users_already_voted.keys()):
@@ -193,10 +246,20 @@ class BotHandler:
         return True
 
     def update_obs_json_url(self, game_id):
+        """ Upate URL in OBS json to stream given game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess to stream
+        """
+
         try:
+            # Gets OBS json as dictionary
             json_info = self.get_obs_info_json()
+
+            # Updates URL
             json_info["url"] = f"http://www.lichess.org/{game_id}"
 
+            # Updates OBS json
             with open(BotHandler.PATH_OBS_JSON, "w") as f:
                 json.dump(json_info, f)
 
@@ -208,12 +271,24 @@ class BotHandler:
                 + f" Exception: {e}")
 
     def update_obs_json_WDL(self, wins, draws, losses):
+        """ Upate wins, draws and losses in OBS json
+
+        Arguments:
+            wins {int} -- Number of wins
+            draws {int} -- Number of draws
+            losses {int} -- Number of losses
+        """
+
         try:
+            # Gets OBS json as dictionary
             json_info = self.get_obs_info_json()
+
+            # Updates wins, draws and losses
             json_info["wins"] = wins
             json_info["draws"] = draws
             json_info["losses"] = losses
 
+            # Updates OBS json
             with open(BotHandler.PATH_OBS_JSON, "w") as f:
                 json.dump(json_info, f)
 
@@ -225,8 +300,12 @@ class BotHandler:
                 + f" Exception: {e}")
 
     def create_obs_info_json(self):
+        """ Creates OBS json file """
+
         with open(BotHandler.PATH_OBS_JSON, "w") as f:
+            # Get last played game ID 
             last_id = self.bot_chess.get_id_last_game_played()
+            # Creates OBS json file with URL from last game played
             json.dump(
                 {"wins": 0, "losses": 0, "draws": 0, 
                 "url": "http://www.lichess.org/"
@@ -235,6 +314,12 @@ class BotHandler:
         print_debug(f"Create {BotHandler.PATH_OBS_JSON} as OBS json", "DEBUG")
 
     def get_obs_info_json(self):
+        """ Gets OBS json as dictionary
+
+        Returns:
+            dict or None -- OBS json information or None in case of error
+        """
+
         if(not os.path.exists(BotHandler.PATH_OBS_JSON)):
             print_debug(f"File {BotHandler.PATH_OBS_JSON} does not exists",
                 "DEBUG")
@@ -255,15 +340,39 @@ class BotHandler:
             return json_info
 
     def get_game_id_from_url(self, url):
+        """ Get Lichess game ID from given URL
+        
+        Arguments:
+            url {str} -- Lichess game URL
+        
+        Returns:
+            str -- Game ID
+        """
         return url.split("/")[-1]
 
     def get_game_ids(self):
+        """ Get current Lichess games IDs
+        
+        Returns:
+            list -- List of games IDs
+        """
+
         cp_game_ids = None
         with self.lock_game_ids:
             cp_game_ids = cp.deepcopy(self.game_ids)
         return cp_game_ids
 
     def get_command_from_msg(self, msg):
+        """ Gets command from given message
+
+        Arguments:
+            msg {str} -- Message to get command from
+        
+        Returns:
+            dict or None -- Command dict as {"!command": command_msg} in case
+                a command is found, None otherwise
+        """
+
         # COMMANDS MUST START WITH !
         if(msg[0] != '!'):
             return None
