@@ -51,19 +51,13 @@ class BotChess:
         return thread
 
     def thread_treat_incoming_events(self):
-        for event in self.client.bots.stream_incoming_events():
-            # If the event is a challenge
-            if(event["type"] == "challenge"):
-                # If the challenge is validated, accepts it
-                if(self.validate_challenge_event(event)):
-                    self.client.challenges.accept(event['challenge']['id'])
-                    print_debug("Accepted challenge by" +
-                        f"{event['challenge']['challenger']['id']}")
-                else:  # Otherwise, declines it
-                    self.client.challenges.decline(event['challenge']['id'])
-                    print_debug("Declined challenge by " +
-                        f"{event['challenge']['challenger']['id']}")
-        print_debug("Finished incoming events thread", "DEBUG")
+        while(True):
+            try:
+                for event in self.client.bots.stream_incoming_events():
+                    self.treat_incoming_event(event)
+            except Exception as e:
+                print_debug(f"Exception in incoming events. Exception: {e}",
+                    'ERROR')
 
     def thread_update_ongoing_games(self):
         while(True):
@@ -86,14 +80,20 @@ class BotChess:
 
                     # Gets opponent ID
                     player_id = self.ongoing_games[game_id]["opponent"]["id"]
+                    # If ID is none, probably is playing against the computer
+                    if(player_id is None):
+                        continue
+
                     try:
                         # Gets opponent player information
                         player = self.client.users.get_by_id(player_id)
+
                         # If opponent player is not online, resigns
                         if(not player[0]['online']):
                             print_debug(f"Opponent {player_id} offline."
                                 + " Resigning", "DEBUG")
                             self.resign_game(game_id)
+
                     except Exception as e:
                         print_debug(f"Unable to get player {player_id}." 
                             + f" Exception: {e}")
@@ -163,6 +163,19 @@ class BotChess:
         with(self.lock_thread_games):
             self.thread_games.remove(game_id)
         print_debug(f'Finished game {game_id}', 'DEBUG')
+
+    def treat_incoming_event(self, event):
+        # If the event is a challenge
+        if(event["type"] == "challenge"):
+            # If the challenge is validated, accepts it
+            if(self.validate_challenge_event(event)):
+                self.client.challenges.accept(event['challenge']['id'])
+                print_debug("Accepted challenge by" +
+                    f"{event['challenge']['challenger']['id']}")
+            else:  # Otherwise, declines it
+                self.client.challenges.decline(event['challenge']['id'])
+                print_debug("Declined challenge by " +
+                    f"{event['challenge']['challenger']['id']}")
 
     def validate_challenge_event(self, event):
         # Updates ongoing games to avoid concurrence problems
@@ -285,19 +298,23 @@ class BotChess:
         return True
 
     def update_ongoing_games(self):
-        try:
-            with self.lock_ongoing_games:
-                # First empty the dict of ongoing games
-                self.ongoing_games = {}
-                # Gets ongoing games
-                games = self.client.games.get_ongoing()
-                # Add all games to ongoing games dictionary
-                for game in games:
-                    self.ongoing_games[game['gameId']] = game
+        games = []
 
+        # Tries to get ongoing games. If it is not able, returns
+        try:
+            games = self.client.games.get_ongoing()
         except Exception as e:
-            print_debug(f'Unable to get ongoing games\nException: {e}',
+            print_debug(f'Unable to get ongoing games. Exception: {e}',
                         'EXCEPTION')
+            return
+
+        with self.lock_ongoing_games:
+            # First empty the dict of ongoing games
+            self.ongoing_games = {}
+            # Gets ongoing games
+            # Add all games to ongoing games dictionary
+            for game in games:
+                self.ongoing_games[game['gameId']] = game
 
     def create_challenge(self, username, rated=True, clock_sec=180, 
                          clock_incr_sec=2):

@@ -3,7 +3,6 @@ import os
 from threading import Lock, Thread
 import copy as cp
 
-import sqlite3
 import json
 import pprint
 pp = pprint.PrettyPrinter()
@@ -77,7 +76,7 @@ class BotHandler:
 
                 # Tries to get command from message
                 command = self.get_command_from_msg(message['message'])
-                print(command)
+
                 if(command is not None):
                     self.treat_command(command, message)
                     continue
@@ -227,10 +226,11 @@ class BotHandler:
 
     def create_obs_info_json(self):
         with open(BotHandler.PATH_OBS_JSON, "w") as f:
+            last_id = self.bot_chess.get_id_last_game_played()
             json.dump(
                 {"wins": 0, "losses": 0, "draws": 0, 
                 "url": "http://www.lichess.org/"
-                    + self.bot_chess.get_id_last_game_played()}
+                    + (last_id if last_id is not None else "")}
                 , f)
         print_debug(f"Create {BotHandler.PATH_OBS_JSON} as OBS json", "DEBUG")
 
