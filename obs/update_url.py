@@ -74,7 +74,7 @@ def script_update(settings):
 
 
 def script_defaults(settings):
-    obs.obs_data_set_default_int(settings, "interval", 30)
+    obs.obs_data_set_default_int(settings, "interval", 5)
 
 
 def script_properties():
