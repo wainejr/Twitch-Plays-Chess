@@ -1,5 +1,6 @@
 import time
 from threading import Thread, Lock
+import copy as cp
 
 import requests
 import chess
@@ -521,6 +522,32 @@ class BotChess:
 
         with self.lock_ongoing_games:
             return list(self.ongoing_games.keys())
+
+    def get_ongoing_games(self):
+        """ Get dictionary of ongoing games
+        
+        Returns:
+            dict -- Dictionary of ongoing games
+        """
+
+        with self.lock_ongoing_games:
+            return cp.deepcopy(self.ongoing_games)
+
+    def get_color_in_ongoing_game(self, game_id):
+        """ Gets color in given ongoing game
+
+        Arguments:
+            game_id {str} -- Game ID in Lichess
+
+        Returns:
+            str or None -- 'white' or 'black' or None in case the 
+                game is not ongoing
+        """
+
+        with self.lock_ongoing_games:
+            if(game_id in self.ongoing_games.keys()):
+                return self.ongoing_games[game_id]['color']
+        return None
 
     def get_id_last_game_played(self):
         """ Get Lichess game ID of the last game played

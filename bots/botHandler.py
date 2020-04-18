@@ -16,6 +16,12 @@ class BotHandler:
 
     # json file used by OBS to update its scenes
     PATH_OBS_JSON = './obs/info.json'
+
+    # Interval (seconds) to change URL in OBS json and then change back to the
+    # one before. This is needed because OBS does not refresh
+    # page after some time
+    REFRESH_URL_INTERVAL = 1800 # 30 minutes
+
     # COMMANDS MUST START WITH '!'
     MSG_COMMANDS = ['!resign', '!challenge']
 
@@ -38,19 +44,20 @@ class BotHandler:
         self.users_already_voted = {}
         self.lock_users_already_voted = Lock()
 
-        # Resign votes for games key:game_id, value:number of votes
-        self.resign_votes = {}
-
     def run(self):
         """ Run BotHandler (start program) """
         # Start game_id checking thread
         self.thread_games = Thread(
             target=self.thread_update_game_ids, daemon=True)
         self.thread_games.start()
-        # Start OBS thread
-        self.thread_obs = Thread(
-            target=self.thread_obs_update, daemon=True)
-        self.thread_obs.start()
+        # Start OBS thread to update wins, draws and losses
+        self.thread_obs_wdl = Thread(
+            target=self.thread_obs_update_WDL, daemon=True)
+        self.thread_obs_wdl.start()
+        # Start OBS thread to update URL
+        self.thread_obs_url = Thread(
+            target=self.thread_obs_update_URL, daemon=True)
+        self.thread_obs_url.start()
         # Start Twitch thread
         self.thread_twitch = Thread(
             target=self.thread_twitch_chat, daemon=True)
@@ -97,44 +104,62 @@ class BotHandler:
                 if(move is not None):
                     self.treat_move_msg(move, message)
 
-    def thread_obs_update(self):
-        """ Thread to update OBS json file """
+    def thread_obs_update_WDL(self):
+        """ Thread to update wins, draws and losses in OBS json """
 
         last_json = self.get_obs_info_json()
-        has_updated_wdl = False
+
+        while(True):
+            time.sleep(5)
+            # Updates wins, draws and losses at the beginning
+            acc_info = self.bot_chess.get_account_info()
+            if(acc_info is not None):
+                # Gets wins, draws and losses
+                wins, draws, losses = acc_info['count']['win'], \
+                    acc_info['count']['draw'], acc_info['count']['loss']
+                if(wins != last_json['wins'] or draws != last_json['draws'] 
+                   or losses != last_json['losses']):
+                    # Updates local json
+                    self.update_obs_json_WDL(wins, draws, losses)
+                    last_json = self.get_obs_info_json()
+
+    def thread_obs_update_URL(self):
+        """ Thread to update OBS json file """
+
+        last_game_id = self.get_game_id_from_url(self.get_obs_info_json()['url'])
+        refresh_time = time.time()
+        color = 'white'
 
         while True:
-            time.sleep(0.2)
+            time.sleep(0.5)
+
+            # If refresh time has passed, updated URL, wait some time and then
+            # go back to the page
+            if(time.time()-refresh_time >= BotHandler.REFRESH_URL_INTERVAL):
+                # Updates URL to user page
+                self.update_obs_json_url(last_game_id)
+                time.sleep(3)
+                # Updated URL back to game_id
+                self.update_obs_json_url(last_game_id+'/'+color)
+                refresh_time = time.time()
 
             # Get current ongoing games
             games_ids = self.get_game_ids()
 
-            # If there are no games and Wins, Draws and Losses 
-            # were not updated yet
-            if not has_updated_wdl and len(games_ids) == 0:
-                # Gets account info
-                acc_info = self.bot_chess.get_account_info()
-
-                if(acc_info is not None):
-                    # Gets wins, draws and losses
-                    wins, draws, losses = acc_info['count']['win'], \
-                        acc_info['count']['draw'], acc_info['count']['loss']
-                    # Updates local json
-                    self.update_obs_json_WDL(wins, draws, losses)
-
-                    has_updated_wdl = True
-
             # Update URL that OBS is reading from
             if(len(games_ids) > 0):
-                # Set the Wins, Draws and losses as not updated
-                has_updated_wdl = False
-
                 # Gets current game ID
                 game_id = games_ids[0]
                 # If the game_id has changed, updates OBS json
-                if(game_id != self.get_game_id_from_url(last_json["url"])):
-                    self.update_obs_json_url(game_id)
-                    last_json = self.get_obs_info_json()
+                if(game_id != last_game_id):
+                    # Tries to get color in ongoing game
+                    color_aux = self.bot_chess.get_color_in_ongoing_game(game_id)
+                    if(color_aux is not None):
+                        color = color_aux
+                    # Updated URL
+                    self.update_obs_json_url(game_id+'/'+color)
+                    # Updates last game ID
+                    last_game_id = game_id
 
     def treat_move_msg(self, move, msg_dict):
         """ Treats message with a move
@@ -245,11 +270,11 @@ class BotHandler:
                 return False
         return True
 
-    def update_obs_json_url(self, game_id):
-        """ Upate URL in OBS json to stream given game
+    def update_obs_json_url(self, lichess_route):
+        """ Upate URL in OBS json to stream given Lichess route
 
         Arguments:
-            game_id {str} -- Game ID in Lichess to stream
+            lichess_route {str} -- Route in lichess.org
         """
 
         try:
@@ -257,14 +282,14 @@ class BotHandler:
             json_info = self.get_obs_info_json()
 
             # Updates URL
-            json_info["url"] = f"http://www.lichess.org/{game_id}"
+            url = f"http://www.lichess.org/{lichess_route}"
+            json_info["url"] = url
 
             # Updates OBS json
             with open(BotHandler.PATH_OBS_JSON, "w") as f:
                 json.dump(json_info, f)
 
-            print_debug(f"Wrote http://www.lichess.org/{game_id} to " +
-                f"{BotHandler.PATH_OBS_JSON}", "DEBUG")
+            print_debug(f"Wrote {url} to {BotHandler.PATH_OBS_JSON}", "DEBUG")
 
         except Exception as e:
             print_debug(f"Unable to update url in {BotHandler.PATH_OBS_JSON}."
