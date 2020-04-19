@@ -21,7 +21,7 @@ def print_debug(message, mtype='INFO'):
     """
 
     mtype = mtype.upper()
-    msg = '[{}] [{}] {}'.format(time.strftime('%H:%M:%S', time.gmtime()),
+    msg = '[{}] [{}] {}'.format(time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime()),
                                 mtype, message)
     print(msg, flush=True)
     with open(LOG_FILE, 'a+') as f:
