@@ -2,7 +2,7 @@ import socket
 import sys
 import re
 
-from lib.misc import print_debug, pbot
+from lib.misc import print_debug
 
 
 class BotIRC:
@@ -15,6 +15,8 @@ class BotIRC:
         self.set_socket_object()
 
     def set_socket_object(self):
+        """ Sets socket object """
+
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.sock.settimeout(10)
@@ -44,7 +46,7 @@ class BotIRC:
         self.sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
 
         if not self.check_login_status(self.recv()):
-            print_debug('Invalid login.', 'error')
+            print_debug('Invalid login.', 'ERROR')
             sys.exit()
         else:
             print_debug('Login successful!')
@@ -53,17 +55,40 @@ class BotIRC:
         print_debug('Joined #{}'.format(username))
 
     def ping(self, data):
+        """ Pings socket
+        
+        Arguments:
+            data {bytes} -- Data to ping
+        """
+
         if data.startswith('PING'):
             self.sock.send(bytes(data.replace('PING', 'PONG'), encoding="utf-8"))
 
     def recv(self, amount=1024):
+        """ Recieves data from socket with given ammount size
+        
+        Keyword Arguments:
+            amount {int} -- Data ammount size (default: {1024})
+        
+        Returns:
+            str -- Bytes recieved in 'utf-8'
+        """
+
         return self.sock.recv(amount).decode('utf-8')
 
     def recv_messages(self, amount=1024):
+        """ Recieves messages from socket and parses it
+        
+        Keyword Arguments:
+            amount {int} -- Data ammount size (default: {1024})
+        
+        Returns:
+            list(dict) -- List of parsed messages
+        """
         data = self.recv(amount)
 
         if not data:
-            pbot('Lost connection, reconnecting.')
+            print_debug('Lost connection, reconnecting.', 'ERROR')
             return self.set_socket_object()
 
         self.ping(data)
@@ -74,18 +99,48 @@ class BotIRC:
         return None
 
     def check_login_status(self, data):
+        """ Check if login was successful or not
+
+        Arguments:
+            data {str} -- Data recieved from socket
+
+        Returns:
+            bool -- True in case of successful login, False otherwise
+        """
+
         if not re.match(
                 r'^:(testserver\.local|tmi\.twitch\.tv)'
                 + r' NOTICE \* :Login unsuccessful\r\n$', data):
             return True
+        return False
 
     def check_has_message(self, data):
+        """ Check if given data has message
+
+        Arguments:
+            data {str} -- Data to checkc
+
+        Returns:
+            Match object or None -- Match object if message was found, 
+                None otherwise
+        """
         return re.match(
             r'^:[a-zA-Z0-9_]+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]'
             + r'+(\.tmi\.twitch\.tv|\.testserver\.local) '
             + r'PRIVMSG #[a-zA-Z0-9_]+ :.+$', data)
 
     def parse_message(self, data):
+        """ Parses message from given data
+        
+        Arguments:
+            data {str} -- Message to parse
+        
+        Returns:
+            dict -- Dictionary as {'channel': channel,
+                'username': username,
+                'message': message}
+        """
+
         return {
             'channel': re.findall(
                 r'^:.+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]'
