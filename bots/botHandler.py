@@ -23,7 +23,7 @@ class BotHandler:
     REFRESH_URL_INTERVAL = 1800 # 30 minutes
 
     # COMMANDS MUST START WITH '!'
-    MSG_COMMANDS = ['!resign', '!challenge']
+    MSG_COMMANDS = ['!resign', '!challenge', '!start']
 
     def __init__(self):
         """ BotHandler constructor """
@@ -72,9 +72,7 @@ class BotHandler:
 
         while True:
             time.sleep(0.2)
-            with self.lock_game_ids:
-                self.game_ids = self.bot_chess.get_ongoing_game_ids()
-
+            self.update_game_ids()
 
     def thread_twitch_chat(self):
         """ Thread to listen messages in Twitch chat and treat them """
@@ -190,6 +188,11 @@ class BotHandler:
             # Set user as already voted in the game
             self.set_user_as_already_voted(game_id, msg_dict['username'])
 
+    def update_game_ids(self):
+        """ Update current game ids """
+        with self.lock_game_ids:
+            self.game_ids = self.bot_chess.get_ongoing_game_ids()
+
     def treat_command(self, command, msg_dict):
         """ Treats command from message
 
@@ -214,12 +217,16 @@ class BotHandler:
             ret = self.bot_chess.vote_for_resign(game_id)
             if(ret):
                 self.set_user_as_already_voted(game_id, msg_dict["username"])
-        elif('!newgame' in command.keys()):
+        elif('!start' in command.keys()):
             # Gets copy of current game ids
             cp_game_ids = self.get_game_ids()
             # If there are no ongoing games, start new game against AI
             if(len(cp_game_ids) == 0):
                 self.bot_chess.tmp_start_new_game_AI()
+                # Updates ongoing games and game_ids to avoid starting 
+                # two games in a row
+                self.bot_chess.update_ongoing_games()
+                self.update_game_ids()
 
         # TODO: Treatment of !challenge command
         elif('!challenge' in command.keys()):
