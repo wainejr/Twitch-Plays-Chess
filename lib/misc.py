@@ -2,6 +2,7 @@ import time
 import os
 
 LOG_FILE = './server.log'
+COOKIE_FILE = './cookie_login'
 
 # TODO: improve log file, its creation and logging
 # Create LOG_FILE
@@ -26,3 +27,10 @@ def print_debug(message, mtype='INFO'):
     print(msg, flush=True)
     with open(LOG_FILE, 'a+') as f:
         f.write(msg+'\n')
+
+
+def get_lichess_login_cookie():
+    if(os.path.exists(COOKIE_FILE)):
+        with open(COOKIE_FILE, 'r') as f:
+            return f.read()
+    return ''

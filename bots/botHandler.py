@@ -200,7 +200,7 @@ class BotHandler:
 
         # Treats !resign command
         if('!resign' in command.keys()):
-            # Gets copy of game ids
+            # Gets copy of current game ids
             cp_game_ids = self.get_game_ids()
             # If there's no game, don't do nothing
             if(len(cp_game_ids) == 0):
@@ -214,9 +214,15 @@ class BotHandler:
             ret = self.bot_chess.vote_for_resign(game_id)
             if(ret):
                 self.set_user_as_already_voted(game_id, msg_dict["username"])
-        
+        elif('!newgame' in command.keys()):
+            # Gets copy of current game ids
+            cp_game_ids = self.get_game_ids()
+            # If there are no ongoing games, start new game against AI
+            if(len(cp_game_ids) == 0):
+                self.bot_chess.tmp_start_new_game_AI()
+
         # TODO: Treatment of !challenge command
-        if('!challenge' in command.keys()):
+        elif('!challenge' in command.keys()):
             pass
 
     def reset_users_voted_moves(self, game_id):
@@ -264,7 +270,7 @@ class BotHandler:
             # If there's no list of users yet
             if(game_id not in self.users_already_voted.keys()):
                 return False
-            # If the user is not in the list of user that 
+            # If the' user is not in the list of user that 
             # already voted in game_id
             if(user not in self.users_already_voted[game_id]):
                 return False
@@ -406,6 +412,6 @@ class BotHandler:
         if(len(parse_msg) == 0):
             return None
         for command in BotHandler.MSG_COMMANDS:
-            if(parse_msg[0] == command):
+            if(parse_msg[0].lower() == command):
                 return {command:
                     parse_msg[1] if len(parse_msg) >= 2 else None}

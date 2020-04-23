@@ -7,7 +7,7 @@ import chess
 import re
 import berserk
 
-from lib.misc import print_debug
+from lib.misc import print_debug, get_lichess_login_cookie
 
 class BotChess:
 
@@ -15,6 +15,9 @@ class BotChess:
     RESIGN_MOVE_STR = 'resign'
     MIN_RESIGN_VOTES = 1
     MIN_RESIGN_PERCENTAGE_VOTES = 0.1
+
+    # Interval without game to search for a new one
+    INTERVAL_SEARCH_GAME = 120
 
     def __init__(self, config, bot_handler, mode='anarchy'):
         """ BotChess constructor
@@ -54,6 +57,56 @@ class BotChess:
         self.start_thread(self.thread_update_ongoing_games)
         self.start_thread(self.thread_games_handler)
         self.start_thread(self.thread_treat_incoming_events)
+        self.start_thread(self.thread_start_new_game_AI)
+
+        time.sleep(10)
+        self.tmp_start_new_game_AI()
+
+    def tmp_start_new_game_AI(self, variant=1, time_min=5.0, increment=8, 
+        days=2, level=8, color='random'):
+        """ Start a new game against Lichess AI (temporary function, it 
+            requires a login cookie in file COOKIE_FILE in lib.misc)
+
+        Keyword Arguments:
+            variant {int} -- Lichess variations of chess, 1 is standard
+                (default: {1})
+            time_min {float} -- Clock time in minutes (default: {5.0})
+            increment {int} --  Clock increment in seconds (default: {8})
+            days {int} -- Clock number of days (default: {2})
+            level {int} -- AI level, 1 to 8 (default: {8})
+            color {str} -- Color to play (default: {'random'})
+            
+        Raises:
+            Exception: Request error when status_code is not 200 nor 303
+        """
+
+        print_debug("Starting new game against AI", "DEBUG")
+
+        url = "https://lichess.org/setup/ai"
+
+        payload = {
+            'variant': variant,
+            'time': time_min,
+            'increment': increment,
+            'days': days,
+            'level': level,
+            'color': color
+        }
+
+        headers = {
+            'cookie': get_lichess_login_cookie(),
+            'Content-Type': 'application/x-www-form-urlencoded',
+        }
+
+        try:
+            r = self.session.post(url, headers=headers, data=payload)
+            if(r.status_code != 200 and r.status_code != 303):
+                raise Exception(f"Response error. Reason: {r.reason}")
+            print_debug("Started new game against AI", "DEBUG")
+
+        except Exception as e:
+            print_debug(f"Unable to start new game against API. Exception: {e}",
+                        "ERROR")
 
     def start_thread(self, thread_func, daemon=True, args=()):
         """ Starts new thread
@@ -91,6 +144,29 @@ class BotChess:
         while(True):
             self.update_ongoing_games()
             time.sleep(1)
+
+    def thread_start_new_game_AI(self):
+        """ Thread for starting new game against AI given class rules """
+        
+        # Don't know when last game ended, set it as a "long time"
+        last_game = time.time()-1000
+        # Initializes has_game
+        has_game = False
+
+        while(True):
+            time.sleep(1)
+
+            # Check if there are ongoing games
+            with(self.lock_ongoing_games):
+                has_game = len(self.ongoing_games.keys()) > 0
+            
+            # If there are ongoing games, updates time last_game
+            if(has_game):
+                last_game = time.time()
+            # If there are games and INTERVAL_SEARCH_GAME has passed from the
+            # last game played, starts a new game against AI (or tries to)
+            elif(time.time()-last_game > BotChess.INTERVAL_SEARCH_GAME):
+                self.tmp_start_new_game_AI()
 
     def thread_games_handler(self):
         """ Thread to handle ongoing games 
