@@ -23,7 +23,7 @@ class BotHandler:
     REFRESH_URL_INTERVAL = 1800 # 30 minutes
 
     # COMMANDS MUST START WITH '!'
-    MSG_COMMANDS = ['!resign', '!challenge']
+    MSG_COMMANDS = ['!resign', '!challenge', '!start']
 
     def __init__(self):
         """ BotHandler constructor """
@@ -72,9 +72,7 @@ class BotHandler:
 
         while True:
             time.sleep(0.2)
-            with self.lock_game_ids:
-                self.game_ids = self.bot_chess.get_ongoing_game_ids()
-
+            self.update_game_ids()
 
     def thread_twitch_chat(self):
         """ Thread to listen messages in Twitch chat and treat them """
@@ -190,6 +188,11 @@ class BotHandler:
             # Set user as already voted in the game
             self.set_user_as_already_voted(game_id, msg_dict['username'])
 
+    def update_game_ids(self):
+        """ Update current game ids """
+        with self.lock_game_ids:
+            self.game_ids = self.bot_chess.get_ongoing_game_ids()
+
     def treat_command(self, command, msg_dict):
         """ Treats command from message
 
@@ -200,7 +203,7 @@ class BotHandler:
 
         # Treats !resign command
         if('!resign' in command.keys()):
-            # Gets copy of game ids
+            # Gets copy of current game ids
             cp_game_ids = self.get_game_ids()
             # If there's no game, don't do nothing
             if(len(cp_game_ids) == 0):
@@ -214,9 +217,19 @@ class BotHandler:
             ret = self.bot_chess.vote_for_resign(game_id)
             if(ret):
                 self.set_user_as_already_voted(game_id, msg_dict["username"])
-        
+        elif('!start' in command.keys()):
+            # Gets copy of current game ids
+            cp_game_ids = self.get_game_ids()
+            # If there are no ongoing games, start new game against AI
+            if(len(cp_game_ids) == 0):
+                self.bot_chess.tmp_start_new_game_AI()
+                # Updates ongoing games and game_ids to avoid starting 
+                # two games in a row
+                self.bot_chess.update_ongoing_games()
+                self.update_game_ids()
+
         # TODO: Treatment of !challenge command
-        if('!challenge' in command.keys()):
+        elif('!challenge' in command.keys()):
             pass
 
     def reset_users_voted_moves(self, game_id):
@@ -264,7 +277,7 @@ class BotHandler:
             # If there's no list of users yet
             if(game_id not in self.users_already_voted.keys()):
                 return False
-            # If the user is not in the list of user that 
+            # If the' user is not in the list of user that 
             # already voted in game_id
             if(user not in self.users_already_voted[game_id]):
                 return False
@@ -406,6 +419,6 @@ class BotHandler:
         if(len(parse_msg) == 0):
             return None
         for command in BotHandler.MSG_COMMANDS:
-            if(parse_msg[0] == command):
+            if(parse_msg[0].lower() == command):
                 return {command:
                     parse_msg[1] if len(parse_msg) >= 2 else None}
