@@ -1,9 +1,9 @@
 import socket
 import sys
 import re
+import time
 
 from lib.misc import print_debug
-
 
 class BotIRC:
 
@@ -17,12 +17,12 @@ class BotIRC:
     def set_socket_object(self):
         """ Sets socket object """
 
+        self.username = self.config['account']['username'].lower()
+        self.password = self.config['account']['password']
+
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.sock.settimeout(10)
-
-        username = self.config['account']['username'].lower()
-        password = self.config['account']['password']
 
         server = self.config['irc']['server']
         port = self.config['irc']['port']
@@ -41,9 +41,9 @@ class BotIRC:
 
         self.sock.settimeout(None)
 
-        self.sock.send(bytes('USER {}\r\n'.format(username), encoding='utf-8'))
-        self.sock.send(bytes('PASS {}\r\n'.format(password), encoding='utf-8'))
-        self.sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
+        self.sock.send(bytes(f'USER {self.username}\r\n', encoding='utf-8'))
+        self.sock.send(bytes(f'PASS {self.password}\r\n', encoding='utf-8'))
+        self.sock.send(bytes(f'NICK {self.username}\r\n', encoding='utf-8'))
 
         if not self.check_login_status(self.recv()):
             print_debug('Invalid login.', 'ERROR')
@@ -51,8 +51,8 @@ class BotIRC:
         else:
             print_debug('Login successful!')
 
-        self.sock.send(bytes('JOIN #{}\r\n'.format(username), encoding='utf-8'))
-        print_debug('Joined #{}'.format(username))
+        self.sock.send(bytes(f'JOIN #{self.username}\r\n', encoding='utf-8'))
+        print_debug(f'Joined #{self.username}')
 
     def ping(self, data):
         """ Pings socket
@@ -75,6 +75,10 @@ class BotIRC:
         """
 
         return self.sock.recv(amount).decode('utf-8')
+    
+    def send_message(self, data, delay=0):
+        time.sleep(delay)
+        self.sock.send(bytes(f'PRIVMSG #{self.username} :{data}\r\n', encoding='utf-8'))
 
     def recv_messages(self, amount=1024):
         """ Recieves messages from socket and parses it

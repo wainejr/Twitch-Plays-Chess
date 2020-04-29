@@ -7,7 +7,7 @@ import chess
 import re
 import berserk
 
-from lib.misc import print_debug, get_lichess_login_cookie
+from lib.misc import print_debug, get_lichess_login_cookie, start_thread
 
 class BotChess:
 
@@ -54,61 +54,12 @@ class BotChess:
                 'Unable to connect to lichess API. Check your personal token')
 
         # Start threads
-        self.start_thread(self.thread_update_ongoing_games)
-        self.start_thread(self.thread_games_handler)
-        self.start_thread(self.thread_treat_incoming_events)
-        self.start_thread(self.thread_start_new_game_AI)
+        start_thread(self.thread_update_ongoing_games)
+        start_thread(self.thread_games_handler)
+        start_thread(self.thread_treat_incoming_events)
+        start_thread(self.thread_challenge_ai)
 
         time.sleep(5)
-
-    def tmp_start_new_game_AI(self, variant=1, time_mode=0, time_min=5.0, 
-        increment=8, days=2, level=8, color='random'):
-        """ Start a new game against Lichess AI (temporary function, it 
-            requires a login cookie in file COOKIE_FILE in lib.misc)
-
-        Keyword Arguments:
-            variant {int} -- Lichess variations of chess, 1 is standard
-                (default: {1})
-            time_mode {int} -- Lichess time mode, 0 is correspondence 
-                (default: {0})
-            time_min {float} -- Clock time in minutes (default: {5.0})
-            increment {int} --  Clock increment in seconds (default: {8})
-            days {int} -- Clock number of days (default: {2})
-            level {int} -- AI level, 1 to 8 (default: {8})
-            color {str} -- Color to play (default: {'random'})
-            
-        Raises:
-            Exception: Request error when status_code is not 200 nor 303
-        """
-
-        print_debug("Starting new game against AI", "DEBUG")
-
-        url = "https://lichess.org/setup/ai"
-
-        payload = ''
-        payload += f'variant={variant}&'
-        payload += f'fen=&'
-        payload += f'timeMode={time_mode}&'
-        payload += f'time={time_min}&'
-        payload += f'increment={increment}&'
-        payload += f'days={days}&'
-        payload += f'level={level}&'
-        payload += f'color={color}'
-
-        headers = {
-            'cookie': get_lichess_login_cookie(),
-            'Content-Type': 'application/x-www-form-urlencoded',
-        }
-
-        try:
-            r = requests.post(url, headers=headers, data=payload)
-            if(r.status_code != 200 and r.status_code != 303):
-                raise Exception(f"Response error. Reason: {r.reason}")
-            print_debug("Started new game against AI", "DEBUG")
-
-        except Exception as e:
-            print_debug(f"Unable to start new game against API. Exception: {e}",
-                        "ERROR")
 
     def start_thread(self, thread_func, daemon=True, args=()):
         """ Starts new thread
@@ -147,11 +98,11 @@ class BotChess:
             self.update_ongoing_games()
             time.sleep(1)
 
-    def thread_start_new_game_AI(self):
+    def thread_challenge_ai(self):
         """ Thread for starting new game against AI given class rules """
         
-        # Don't know when last game ended, set it as a "long time"
-        last_game = time.time()-1000
+        # Don't know when last game ended, set it as now
+        last_game = time.time()
         # Initializes has_game
         has_game = False
         # Updates ongoing games to not start a game if one already is in play
@@ -171,7 +122,7 @@ class BotChess:
             # If there are games and INTERVAL_SEARCH_GAME has passed from the
             # last game played, starts a new game against AI (or tries to)
             elif(time.time()-last_game > BotChess.INTERVAL_SEARCH_GAME):
-                self.tmp_start_new_game_AI()
+                self.create_challenge_ai()
                 # Update games to not start a new game again
                 self.update_ongoing_games()
 
@@ -196,19 +147,21 @@ class BotChess:
 
                     # Gets opponent ID
                     player_id = self.ongoing_games[game_id]["opponent"]["id"]
-                    # If ID is none, probably is playing against the computer
+                    # If ID is none, probably is playing against the 
+                    # computer or anonymous session
                     if(player_id is None):
                         continue
 
                     try:
                         # Gets opponent player information
                         player = self.client.users.get_by_id(player_id)
-
                         # If opponent player is not online, resigns
                         if(not player[0]['online']):
                             print_debug(f"Opponent {player_id} offline."
                                 + " Resigning", "DEBUG")
                             self.resign_game(game_id)
+                            # Updates ongoing games to not resign again
+                            self.update_ongoing_games()
 
                     except Exception as e:
                         print_debug(f"Unable to get player {player_id}." 
@@ -254,6 +207,8 @@ class BotChess:
                        resign_votes/total_votes >= 
                        BotChess.MIN_RESIGN_PERCENTAGE_VOTES):
                         self.resign_game(game_id)
+                        # Updates ongoing games to not resign again
+                        self.update_ongoing_games()
 
                 # Performs "random" voted move if mode is anarchy
                 if(self.mode == 'anarchy'):
@@ -297,13 +252,9 @@ class BotChess:
         if(event["type"] == "challenge"):
             # If the challenge is validated, accepts it
             if(self.validate_challenge_event(event)):
-                self.client.challenges.accept(event['challenge']['id'])
-                print_debug("Accepted challenge by" +
-                    f"{event['challenge']['challenger']['id']}")
+                self.treat_challenge(event['challenge']['id'], True)
             else:  # Otherwise, declines it
-                self.client.challenges.decline(event['challenge']['id'])
-                print_debug("Declined challenge by " +
-                    f"{event['challenge']['challenger']['id']}")
+                self.treat_challenge(event['challenge']['id'], False)
 
     def validate_challenge_event(self, event):
         """ Validates a challenge incming event, if it must be accepted
@@ -328,6 +279,44 @@ class BotChess:
 
         return ret
 
+    def treat_challenge(self, id, accept, is_open=False):
+        """ Accepts or decline a challenge from Lichess site
+
+        Arguments:
+            id {str} -- Challenge ID in Lichess
+            accept {bool} -- True to accept challenge, False to decline 
+                (default: {False})
+
+        Keyword Arguments:
+            is_open {bool} -- True if is an open challenge, False otherwise 
+                (default: {False})
+
+        Returns:
+            bool -- True if success, False otherwise
+        """
+
+        try:
+            if(is_open):
+                header = {'cookie': get_lichess_login_cookie(),
+                    'Content-Type': 'application/x-www-form-urlencoded'}
+                r = requests.post(f'https://lichess.org/challenge/{id}/accept',
+                    headers=header)
+                if(r.status_code != 200):
+                    raise Exception(f"Unable to accept open challenge")
+                print_debug(f"Accepted open challenge {id}", "INFO")
+            else:
+                if(accept):
+                    self.client.challenges.accept(id)
+                    print_debug(f"Accepted challenge {id}.", "INFO")
+                else:
+                    self.client.challenges.decline(id)
+                    print_debug(f"Declined challenge {id}.", "INFO")
+        except Exception as e:
+            print_debug(f"Unable to treat challenge {id}. Exception: {e}", 
+                "ERROR")
+            return False
+        return True
+
     def get_account_info(self):
         """ Get current account info
 
@@ -341,7 +330,7 @@ class BotChess:
             return self.client.account.get()
         except Exception as e:
             print_debug(f'Unable to get account info. Exception: {e}',
-                'EXCEPTION')
+                'ERROR')
             return None
 
     def vote_for_resign(self, game_id):
@@ -351,7 +340,7 @@ class BotChess:
             game_id {str} -- Game ID in Lichess
         
         Returns:
-            c -- True in case of success, False otherwise
+            bool -- True
         """
 
         with(self.lock_game_move_votes):
@@ -376,31 +365,47 @@ class BotChess:
             move {str} -- Move in UCI or SAN
         
         Returns:
-            bool -- True in case of success, False otherwise
+            (bool, str) -- (True, move) in case of success, 
+                           (False, None) otherwise
         """
 
+        # Validates move notation
+        if(not self.get_is_move_fmt_valid(move)):
+            print_debug(f'Unable to vote for {move} in game {game_id}. ' +
+                'Invalid format.', 'DEBUG')
+            return False, None
+
+        # Parses castle from SAN to UCI
+        if(move == '0-0-0' or move.lower() == 'o-o-o'):
+            color = self.get_color_in_ongoing_game(game_id)
+            if(color == 'white'):
+                move = 'e1c1'
+            elif(color == 'black'):
+                move = 'e8c8'
+        elif(move == '0-0' or move.lower() == 'o-o'):
+            color = self.get_color_in_ongoing_game(game_id)
+            if(color == 'white'):
+                move = 'e1g1'
+            elif(color == 'black'):
+                move = 'e8g8'
+
+        # Parse from SAN to UCI if necessary
+        if(not self.get_is_uci(move)):
+            # Gets game current board (position)
+            board = self.get_board_from_game(game_id)
+            if(board is None):
+                print_debug(f'Unable to get board from {game_id}. ' + 
+                    'Unable to make move', 'ERROR')
+                return False, None
+            try:
+                # Tries to make move, if not succeeded, move is invalid.
+                move = board.parse_san(move)
+            except Exception as e:
+                print_debug(f'Unable to vote for {move} in game '
+                    f'{game_id}. Exception: {e}', 'ERROR')
+                return False, None
+
         with(self.lock_game_move_votes):
-            # Validates move
-            if(not self.get_is_move_fmt_valid(move)):
-                print_debug(f'Unable to vote for {move} in game {game_id}. ' +
-                    'Invalid format.', 'DEBUG')
-                return False
-
-            # Parse from SAN to UCI if necessary
-            if(not self.get_is_uci(move)):
-                # Gets game current board (position)
-                board = self.get_board_from_game(game_id)
-                if(board is None):
-                    print_debug(f'Unable to get board from {game_id}. ' + 
-                        'Unable to make move', 'ERROR')
-                try:
-                    # Tries to make move, if not succeeded, move is invalid.
-                    move = board.parse_san(move)
-                except Exception as e:
-                    print_debug(f'Unable to vote for {move} in game '
-                        f'{game_id}. Exception: {e}', 'DEBUG')
-                    return False
-
             # Creates dict of voted moves for game, if it does not exists
             if(game_id not in self.game_move_votes.keys()):
                 self.game_move_votes[game_id] = dict()
@@ -411,7 +416,7 @@ class BotChess:
             self.game_move_votes[game_id][move] += 1
 
         print_debug(f'Voted for {move} in game {game_id}', 'DEBUG')
-        return True
+        return True, move
 
     def start_session(self):
         """ Starts session with Lichess API
@@ -428,7 +433,7 @@ class BotChess:
             return True
         except Exception as e:
             print_debug(f'Unable to stablish session\nException: {e}',
-                        'EXCEPTION')
+                        'ERROR')
             return False
 
     def get_move_from_msg(self, message, uci=False):
@@ -459,7 +464,8 @@ class BotChess:
         if(len(move) == 0):
             return None
 
-        return move[0]
+        move = move[0]
+        return move
 
     def make_move(self, game_id, move):
         """ Makes given move in given game
@@ -478,7 +484,7 @@ class BotChess:
             return True
         except Exception as e:
             print_debug(f"Unable to make move {move} in game {game_id}."
-                f" Exception: {e}", 'EXCEPTION')
+                f" Exception: {e}", 'ERROR')
             return False
 
     def get_is_move_fmt_valid(self, move):
@@ -495,7 +501,8 @@ class BotChess:
         if(not self.get_is_uci(move)):
             # Tries to parse SAN move
             # PROBLEMS WITH CASTLING (0-0-0, 0-0)
-            if(chess.SAN_REGEX.match(move) is None):
+            if(chess.SAN_REGEX.match(move) is None and
+               move.lower() not in ('0-0-0', '0-0', 'o-o-o', 'o-o')):
                 return False
         return True
 
@@ -509,7 +516,7 @@ class BotChess:
             games = self.client.games.get_ongoing()
         except Exception as e:
             print_debug(f'Unable to get ongoing games. Exception: {e}',
-                        'EXCEPTION')
+                        'ERROR')
             return
 
         with self.lock_ongoing_games:
@@ -520,48 +527,66 @@ class BotChess:
             for game in games:
                 self.ongoing_games[game['gameId']] = game
 
-    def create_challenge(self, username, rated=False, clock_sec=180, 
-                         clock_incr_sec=2):
+    def create_challenge(self, username=None, rated=False, clock_sec=None, 
+                         clock_incr_sec=None):
         """ Creates challenge against user with given parameters
-        
-        Arguments:
-            username {str} -- User to create challenge against
-        
+
         Keyword Arguments:
+            username {str} -- User to create challenge against or None to
+                open challenge (default: {None})
             rated {bool} -- Game is rated or not (default: {False})
-            clock_sec {int} -- Clock time in seconds (default: {180})
-            clock_incr_sec {int} -- Clock increment in seconds (default: {2})
+            clock_sec {int} -- Clock time in seconds or None for 
+                correspondence (default: {None})
+            clock_incr_sec {int} -- Clock increment in seconds 
+                or None for no increment (default: {None})
+
+        Returns:
+            dict -- Challenge info in dictionary or None in case of error
         """
 
         try:
-            self.client.challenges.create(
-                username, rated, clock_limit=clock_sec,
-                clock_increment=clock_incr_sec)
-            print_debug(f"Created challenge against {username}")
-
+            if(username is not None):
+                r = self.client.challenges.create(
+                    username, rated=rated, clock_limit=clock_sec,
+                    clock_increment=clock_incr_sec)
+                print_debug(f"Created challenge against {username}", "INFO")
+                return r
+            else:
+                r = self.client.challenges.create_open(clock_limit=clock_sec,
+                    clock_increment=clock_incr_sec)
+                print_debug("Created open challenge " + 
+                    f"in {r['challenge']['url']}", "INFO")
+                return r
         except Exception as e:
             print_debug(f'Unable to create challenge. Exception: {e}', 
-                'EXCEPTION')
+                'ERROR')
+            return None
 
-    def seek_game(self, rated=True, clock_min=3, clock_incr_sec=2):
-        """ Seek a game with given parameters
-        
+    def create_challenge_ai(self, level=6, clock_sec=None, 
+                         clock_incr_sec=None):
+        """ Start a new correspondence game against Lichess AI
+
         Keyword Arguments:
-            rated {bool} -- Game is rated or not (default: {True})
-            clock_sec {int} -- Clock time in minutes (default: {3})
-            clock_incr_sec {int} -- Clock increment in seconds (default: {2})
+            level {int} -- AI level, 1 to 8 (default: {6})
+            clock_sec {int} -- Clock time in seconds or None for 
+                correspondence (default: {None})
+            clock_incr_sec {int} -- Clock increment in seconds 
+                or None for no increment (default: {None})
+
+        Returns:
+            dict -- Challenge info in dictionary or None in case of error
         """
 
+        print_debug("Starting new game against AI", "INFO")
+
         try:
-            # Tries to seek game. Unable to do so using BOT accounts :(
-            r = requests.post("http://www.lichess.org/api/board/seek", 
-                params={'rated': str(rated), 
-                    'time': clock_min, 
-                    'incremet': clock_incr_sec},
-                headers={'Authorization': 'Bearer ' + self.config['token']})
-            print(r.text)
+            return self.client.challenges.create_ai(level=level,
+                        clock_limit=clock_sec,
+                        clock_increment=clock_incr_sec)
         except Exception as e:
-            print_debug(f'Unable to seek game. Exception: {e}', 'EXCEPTION')
+            print_debug(f"Unable to start new game against AI. Exception: {e}",
+                        "ERROR")
+        return None
 
     def is_my_turn(self, game_id):
         """ Get if is my turn in given game

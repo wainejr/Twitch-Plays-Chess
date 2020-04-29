@@ -8,7 +8,7 @@ import json
 from config.config import config
 from bots.botIRC import BotIRC
 from bots.botChess import BotChess
-from lib.misc import print_debug
+from lib.misc import print_debug, start_thread
 
 
 class BotHandler:
@@ -22,8 +22,11 @@ class BotHandler:
     # page after some time
     REFRESH_URL_INTERVAL = 1800 # 30 minutes
 
+    # Keeps an open Challenge for at maximum 120 seconds
+    MAX_INTERVAL_OPEN_CHALLENGE = 60
+
     # COMMANDS MUST START WITH '!'
-    MSG_COMMANDS = ['!resign', '!challenge', '!start']
+    MSG_COMMANDS = ['!resign', '!newgame', '!challenge']
 
     def __init__(self):
         """ BotHandler constructor """
@@ -33,12 +36,21 @@ class BotHandler:
 
         # Create BotChess object
         self.bot_chess = BotChess(config['lichess'], self)
+
         # Create BotIRC object
         self.bot_irc = BotIRC(config['twitch'])
 
-        # Current game ids
+        # Ongoing game ids
         self.game_ids = []
         self.lock_game_ids = Lock()
+
+        # Current game ID
+        self.curr_game_id = None
+        self.lock_curr_game_id = Lock()
+
+        # ID of open challenge created by BotChess
+        self.open_challenge_id = None
+        self.lock_open_challenge = Lock()
 
         # Users that already voted in certain games
         self.users_already_voted = {}
@@ -46,33 +58,81 @@ class BotHandler:
 
     def run(self):
         """ Run BotHandler (start program) """
-        # Start game_id checking thread
-        self.thread_games = Thread(
-            target=self.thread_update_game_ids, daemon=True)
-        self.thread_games.start()
-        # Start OBS thread to update wins, draws and losses
-        self.thread_obs_wdl = Thread(
-            target=self.thread_obs_update_WDL, daemon=True)
-        self.thread_obs_wdl.start()
-        # Start OBS thread to update URL
-        self.thread_obs_url = Thread(
-            target=self.thread_obs_update_URL, daemon=True)
-        self.thread_obs_url.start()
-        # Start Twitch thread
-        self.thread_twitch = Thread(
-            target=self.thread_twitch_chat, daemon=True)
-        self.thread_twitch.start()
 
-        # Keeps running, because all threads are daemon
+        # Start game_id checking thread
+        self.thread_games = start_thread(self.thread_update_game_ids)
+        # Start OBS thread to update wins, draws and losses
+        self.thread_obs_wdl = start_thread(self.thread_obs_update_WDL)
+        # Start OBS thread to update URL
+        self.thread_obs_url = start_thread(self.thread_obs_update_URL)
+        # Start Twitch thread
+        self.thread_twitch = start_thread(self.thread_twitch_chat)
+
+        # Keeps program running, because all threads are daemon
         while True:
-            time.sleep(10)
+            time.sleep(5)
 
     def thread_update_game_ids(self):
-        """ Thread to update current games IDs """
+        """ Thread to update current games IDs and handle them """
 
         while True:
-            time.sleep(0.2)
+            time.sleep(1)
             self.update_game_ids()
+
+            cp_game_ids = self.get_game_ids()
+            cp_curr_game = self.get_curr_game_id()
+
+            # Sets as no current game
+            if(len(cp_game_ids) == 0):
+                self.set_curr_game_id(None)
+            # Sets current game
+            elif(len(cp_game_ids) == 1):
+                self.set_curr_game_id(cp_game_ids[0])
+            else:
+                # Sets current game and resigns others
+                if(cp_curr_game is None or cp_curr_game not in cp_game_ids):
+                    self.set_curr_game_id(cp_game_ids[0])
+                    for game in range(1, len(cp_game_ids)):
+                        self.bot_chess.resign_game(game)
+                # Resigns every game that is not the current
+                else:
+                    for game in cp_game_ids:
+                        if(game != cp_curr_game):
+                            self.bot_chess.resign_game(game)
+
+
+    def thread_check_open_challenge(self):
+        """ Checks if open challenge was already accepted or not """
+
+        last_open_challenge = time.time()
+
+        while(True):
+            time.sleep(1)
+
+            # Gets a copy of current ongoing games IDs
+            cp_game_ids = self.get_game_ids()
+
+            with self.lock_open_challenge:
+                # If there is an open challenge and its ID is in the current
+                # ongoing games, that means that the challenge was accepted.
+                # So it resets the open challenge since it is not open anymore
+                if(self.open_challenge_id is not None and 
+                   self.open_challenge_id in cp_game_ids):
+                    self.open_challenge_id = None
+                    print_debug(f"Open challenge {self.open_challenge_id}" 
+                        + " accepted", "INFO")
+                # If the open challenge interval has passed with an open 
+                # challenge, resets the open challenge.
+                elif(self.open_challenge_id is not None and
+                     time.time() - last_open_challenge > 
+                     BotHandler.MAX_INTERVAL_OPEN_CHALLENGE):
+                    self.open_challenge_id = None
+                    print_debug("Reseted open challenge "
+                        + f"{self.open_challenge_id}.", "INFO")
+                # Resets the time of the last open challenge, if there is no
+                # open challenge
+                elif(self.open_challenge_id is None):
+                    last_open_challenge = time.time()
 
     def thread_twitch_chat(self):
         """ Thread to listen messages in Twitch chat and treat them """
@@ -131,13 +191,13 @@ class BotHandler:
         while True:
             time.sleep(0.5)
 
-            # If refresh time has passed, updated URL, wait some time and then
-            # go back to the page
+            # If refresh time has passed, updates URL, wait some time and then
+            # go back to the previous page
             if(time.time()-refresh_time >= BotHandler.REFRESH_URL_INTERVAL):
-                # Updates URL to user page
+                # Updates URL to game_id without color
                 self.update_obs_json_url(last_game_id)
                 time.sleep(3)
-                # Updated URL back to game_id
+                # Updates URL back to game_id
                 self.update_obs_json_url(last_game_id+'/'+color)
                 refresh_time = time.time()
 
@@ -167,26 +227,24 @@ class BotHandler:
             msg_dict {dict} -- Dictionary with message info
         """
 
-        # Get copy of current game ids
-        cp_game_ids = self.get_game_ids()
-        if(len(cp_game_ids) == 0):
+        # Get copy of current game id
+        game_id = self.get_curr_game_id()
+        if(game_id is None):
             return
 
-        # Select game_id
-        # TODO: more robust way to define game_id 
-        # (needed if there's more than one game)
-        game_id = cp_game_ids[0]
-        
         # If the user has already voted in that game, it does not
         # let him vote again
         if(self.get_has_user_already_voted(game_id, msg_dict['username'])):
             print_debug(f"{msg_dict['username']} trying to vote again", "DEBUG")
+            self.bot_irc.send_message(f"{msg_dict['username']} already voted")
             return
+
         # Votes for move in the game
-        ret = self.bot_chess.vote_for_move(game_id, move)
+        ret, move = self.bot_chess.vote_for_move(game_id, move)
         if(ret):
             # Set user as already voted in the game
             self.set_user_as_already_voted(game_id, msg_dict['username'])
+            self.bot_irc.send_message(f"{msg_dict['username']} voted for {move}")
 
     def update_game_ids(self):
         """ Update current game ids """
@@ -200,14 +258,17 @@ class BotHandler:
             command {dict} -- Dictionary as {"!command_name": command_msg}
             msg_dict {dict} -- Dictionary with message info
         """
+        
+        # Gets copy of current game ids
+        cp_game_ids = self.get_game_ids()
 
         # Treats !resign command
         if('!resign' in command.keys()):
-            # Gets copy of current game ids
-            cp_game_ids = self.get_game_ids()
             # If there's no game, don't do nothing
             if(len(cp_game_ids) == 0):
-                print_debug("There is no game, unable to resign", "DEBUG")
+                print_debug("There is no game, unable to resign", "INFO")
+                self.bot_irc.send_message("There's no ongoing game." +
+                    " Unable to resign", 0.3)
                 return
 
             # Select game_id
@@ -217,20 +278,44 @@ class BotHandler:
             ret = self.bot_chess.vote_for_resign(game_id)
             if(ret):
                 self.set_user_as_already_voted(game_id, msg_dict["username"])
-        elif('!start' in command.keys()):
-            # Gets copy of current game ids
-            cp_game_ids = self.get_game_ids()
+
+        elif('!newgame' in command.keys()):
             # If there are no ongoing games, start new game against AI
             if(len(cp_game_ids) == 0):
-                self.bot_chess.tmp_start_new_game_AI()
-                # Updates ongoing games and game_ids to avoid starting 
+                self.bot_chess.create_challenge_ai()
+                # Updates ongoing games and game_ids to avoid starting
                 # two games in a row
                 self.bot_chess.update_ongoing_games()
                 self.update_game_ids()
+            else:
+                print_debug("There is an ongoing game," 
+                    + " unable to start new game", "INFO")
+                self.bot_irc.send_message("There's already an ongoing game." +
+                    " Finish it first to start a new game!", 0.3)
 
-        # TODO: Treatment of !challenge command
         elif('!challenge' in command.keys()):
-            pass
+            if(len(cp_game_ids) > 0):
+                self.bot_irc.send_message("There's already an ongoing game." +
+                    " Finish it first to challenge me!", 0.3)
+                return
+
+            # If there are no ongoing games, create open challenge and join it
+            if(self.open_challenge_id is None):
+                r = self.bot_chess.create_challenge()
+                if(r is not None):
+                    # Accepts challenge in a thread (it takes a while so it is
+                    # best to do it in a thread)
+                    start_thread(self.bot_chess.treat_challenge, 
+                        args=[r['challenge']['id'], True, True])
+                    self.open_challenge_id = r['challenge']['id']
+            else:
+                print_debug("There is already an open challenge," 
+                    + " unable to start a new one", "INFO")
+
+            if(self.open_challenge_id is not None):
+                self.bot_irc.send_message(
+                    f"Go to https://lichess.org/{self.open_challenge_id} "
+                    + "and accept the challenge!", 0.3)
 
     def reset_users_voted_moves(self, game_id):
         """ Reset users that voted in given game
@@ -399,6 +484,28 @@ class BotHandler:
         with self.lock_game_ids:
             cp_game_ids = cp.deepcopy(self.game_ids)
         return cp_game_ids
+
+    def get_curr_game_id(self):
+        """ Gets current game ID
+
+        Returns:
+            str -- Current game ID
+        """
+
+        cp_curr_game_id = None
+        with self.lock_curr_game_id:
+            cp_curr_game_id = cp.deepcopy(self.curr_game_id)
+        return cp_curr_game_id
+
+    def set_curr_game_id(self, game_id):
+        """ Sets current game ID
+
+        Arguments:
+            game_id {str} -- Current game ID
+        """
+
+        with self.lock_curr_game_id:
+            self.curr_game_id = game_id
 
     def get_command_from_msg(self, msg):
         """ Gets command from given message
