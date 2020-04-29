@@ -2,12 +2,14 @@ import time
 import os
 from threading import Lock, Thread
 import copy as cp
+from datetime import datetime
 
 import json
 
 from config.config import config
 from bots.botIRC import BotIRC
 from bots.botChess import BotChess
+from db.dbHandler import DbHandler
 from lib.misc import print_debug, start_thread
 
 
@@ -39,6 +41,9 @@ class BotHandler:
 
         # Create BotIRC object
         self.bot_irc = BotIRC(config['twitch'])
+
+        # Create Database Handler
+        self.db_handler = DbHandler()
 
         # Ongoing game ids
         self.game_ids = []
@@ -244,7 +249,12 @@ class BotHandler:
         if(ret):
             # Set user as already voted in the game
             self.set_user_as_already_voted(game_id, msg_dict['username'])
-            self.bot_irc.send_message(f"{msg_dict['username']} voted for {move}")
+            # Send message to Twitch Chat
+            self.bot_irc.send_message(
+                f"{msg_dict['username']} voted for {move}")
+            # Register vote in database
+            self.db_handler.add_move_vote(
+                msg_dict['username'], move, datetime.utcnow(), game_id)
 
     def update_game_ids(self):
         """ Update current game ids """
