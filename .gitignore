@@ -5,3 +5,4 @@ obs/info.json
 *.log
 cache/
 cookie_login
+*.db
