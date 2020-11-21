@@ -1,4 +1,4 @@
-config/config.py
+config.py
 *.pyc
 .vscode/
 obs/info.json
