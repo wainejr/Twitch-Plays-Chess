@@ -21,17 +21,21 @@ class BotIRC:
 
         self.sock.settimeout(10)
 
-        username = self.config['account']['username'].lower()
-        password = self.config['account']['password']
+        username = self.config["account"]["username"].lower()
+        password = self.config["account"]["password"]
 
-        server = self.config['irc']['server']
-        port = self.config['irc']['port']
+        server = self.config["irc"]["server"]
+        port = self.config["irc"]["port"]
 
         try:
             self.sock.connect((server, port))
         except BaseException:
-            print_debug('Error connecting to IRC server. ({}:{}) ({})'.format(
-                server, port, self.socket_retry_count + 1), 'error')
+            print_debug(
+                "Error connecting to IRC server. ({}:{}) ({})".format(
+                    server, port, self.socket_retry_count + 1
+                ),
+                "error",
+            )
 
             if BotIRC.socket_retry_count < 2:
                 BotIRC.socket_retry_count += 1
@@ -41,18 +45,18 @@ class BotIRC:
 
         self.sock.settimeout(None)
 
-        self.sock.send(bytes('USER {}\r\n'.format(username), encoding='utf-8'))
-        self.sock.send(bytes('PASS {}\r\n'.format(password), encoding='utf-8'))
-        self.sock.send(bytes('NICK {}\r\n'.format(username), encoding='utf-8'))
+        self.sock.send(bytes("USER {}\r\n".format(username), encoding="utf-8"))
+        self.sock.send(bytes("PASS {}\r\n".format(password), encoding="utf-8"))
+        self.sock.send(bytes("NICK {}\r\n".format(username), encoding="utf-8"))
 
         if not self.check_login_status(self.recv()):
-            print_debug('Invalid login.', 'ERROR')
+            print_debug("Invalid login.", "ERROR")
             sys.exit()
         else:
-            print_debug('Login successful!')
+            print_debug("Login successful!")
 
-        self.sock.send(bytes('JOIN #{}\r\n'.format(username), encoding='utf-8'))
-        print_debug('Joined #{}'.format(username))
+        self.sock.send(bytes("JOIN #{}\r\n".format(username), encoding="utf-8"))
+        print_debug("Joined #{}".format(username))
 
     def ping(self, data):
         """ Pings socket
@@ -61,8 +65,8 @@ class BotIRC:
             data {bytes} -- Data to ping
         """
 
-        if data.startswith('PING'):
-            self.sock.send(bytes(data.replace('PING', 'PONG'), encoding="utf-8"))
+        if data.startswith("PING"):
+            self.sock.send(bytes(data.replace("PING", "PONG"), encoding="utf-8"))
 
     def recv(self, amount=1024):
         """ Recieves data from socket with given ammount size
@@ -74,7 +78,7 @@ class BotIRC:
             str -- Bytes recieved in 'utf-8'
         """
 
-        return self.sock.recv(amount).decode('utf-8')
+        return self.sock.recv(amount).decode("utf-8")
 
     def recv_messages(self, amount=1024):
         """ Recieves messages from socket and parses it
@@ -88,14 +92,15 @@ class BotIRC:
         data = self.recv(amount)
 
         if not data:
-            print_debug('Lost connection, reconnecting.', 'ERROR')
+            print_debug("Lost connection, reconnecting.", "ERROR")
             return self.set_socket_object()
 
         self.ping(data)
 
         if self.check_has_message(data) is not None:
-            return [self.parse_message(line)
-                    for line in filter(None, data.split('\r\n'))]
+            return [
+                self.parse_message(line) for line in filter(None, data.split("\r\n"))
+            ]
         return None
 
     def check_login_status(self, data):
@@ -109,8 +114,10 @@ class BotIRC:
         """
 
         if not re.match(
-                r'^:(testserver\.local|tmi\.twitch\.tv)'
-                + r' NOTICE \* :Login unsuccessful\r\n$', data):
+            r"^:(testserver\.local|tmi\.twitch\.tv)"
+            + r" NOTICE \* :Login unsuccessful\r\n$",
+            data,
+        ):
             return True
         return False
 
@@ -125,9 +132,11 @@ class BotIRC:
                 None otherwise
         """
         return re.match(
-            r'^:[a-zA-Z0-9_]+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]'
-            + r'+(\.tmi\.twitch\.tv|\.testserver\.local) '
-            + r'PRIVMSG #[a-zA-Z0-9_]+ :.+$', data)
+            r"^:[a-zA-Z0-9_]+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]"
+            + r"+(\.tmi\.twitch\.tv|\.testserver\.local) "
+            + r"PRIVMSG #[a-zA-Z0-9_]+ :.+$",
+            data,
+        )
 
     def parse_message(self, data):
         """ Parses message from given data
@@ -142,9 +151,9 @@ class BotIRC:
         """
 
         return {
-            'channel': re.findall(
-                r'^:.+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]'
-                + r'+.+ PRIVMSG (.*?) :', data)[0],
-            'username': re.findall(r'^:([a-zA-Z0-9_]+)\!', data)[0],
-            'message': re.findall(r'PRIVMSG #[a-zA-Z0-9_]+ :(.+)', data)[0]
+            "channel": re.findall(
+                r"^:.+\![a-zA-Z0-9_]+@[a-zA-Z0-9_]" + r"+.+ PRIVMSG (.*?) :", data
+            )[0],
+            "username": re.findall(r"^:([a-zA-Z0-9_]+)\!", data)[0],
+            "message": re.findall(r"PRIVMSG #[a-zA-Z0-9_]+ :(.+)", data)[0],
         }
